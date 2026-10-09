@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:trailtest="urn:trail:test" version="1.1" creator="Trail test fixture">
+  <metadata><name>阶段二测试路线</name></metadata>
+  <wpt lat="1.306" lon="103.806"><name>休息点</name><sym>Flag</sym></wpt>
+  <trk><name>林间环线 · 测试</name>
+    <trkseg>
+      <trkpt lat="1.300" lon="103.800"><ele>10</ele><extensions><trailtest:note>仅测试</trailtest:note></extensions></trkpt>
+      <trkpt lat="1.302" lon="103.801"/><trkpt lat="1.304" lon="103.800"/>
+      <trkpt lat="1.306" lon="103.802"/><trkpt lat="1.306" lon="103.806"/>
+    </trkseg>
+    <trkseg><trkpt lat="1.304" lon="103.807"/><trkpt lat="1.302" lon="103.806"/><trkpt lat="1.300" lon="103.803"/></trkseg>
+  </trk>
+  <rte><name>返程路线 · 测试</name><rtept lat="1.300" lon="103.803"/><rtept lat="1.298" lon="103.802"/><rtept lat="1.300" lon="103.800"/></rte>
+</gpx>
