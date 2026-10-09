@@ -16,6 +16,8 @@
 | TrailApplication | 数据库容器、进程级恢复屏障、错误状态 | Activity 重建不重复恢复 |
 | exchange/GpxReader、GpxModel | GPX 流式解析、安全限制、原始事件与预览统计 | 仅依赖 JVM；不接触 Android URI 或数据库 |
 | exchange/GpxImportRepository | 私有原件、哈希、分批暂存与原子发布 | IO 线程写入，不改录制 Session |
+| exchange/GpxWriter、GpxExportRepository | 标准顺序序列化、原始点分段读取、私有临时文件与 SAF 保存 | 先完整生成并重解析，再向外部目标复制 |
+| data/TrackManagementRepository、tracks/TrackActionsViewModel | 改名、删除与导出操作状态 | 外键事务清理，活跃录制不可删除或导出 |
 | exchange/ImportViewModel、ui/ImportDialog | 文件读取、取消、选择与重复处理 | 旋转屏幕保留导入任务，进程中断不假装继续 |
 | map/MapGeometry、MapSource | 跨日期线渲染、视口计算、底图隐私开关与缓存 | 只变换显示，不改 WGS84 原点 |
 
@@ -32,6 +34,8 @@
 9. GPX 两次顺序读取：第一次有界预览，确认后第二次写入。每批最多 500 个事件或约 1 Mi 字符扩展，避免长事务阻塞录制。文档先为 STAGING，所有选择对象完成后才原子切换 READY；取消、失败和进程恢复删除未发布数据及其私有副本。
 10. 参考路线的路径 ID 和当前录制路径完全分离；SavedStateHandle 保存页面选择，加载/移除参考线不写 Session。MapLibre 使用紫色参考线与白色描边的绿色实录线区分。
 11. XML 禁用 DTD/外部实体；命名空间、结构、坐标及可选数值严格检查。未知子树携带命名空间保存；原文件另存私有副本，为阶段 3 的语义导出与原件分享分别提供数据。
+12. GPX 1.1 导出逐段分页读原始点，避免使用地图抽稀数据；同类路线按原 ordinal 排列，但 1.1 标准要求路线整体先于轨迹。1.0 URL 转为 link，无法直接映射的旧字段写入带来源版本的应用扩展。
+13. 删除路径时同一事务清理其 Path/Segment XML 片段及级联点；若同文件仍有其他路径或顶层航点，文档与原件继续保留。确认后删除最后一个对象才清理私有原件。分享通过 FileProvider 只授权对应私有文件。
 
 这些决策在对应实现附近有注释。一般的赋值和 UI 布局不逐行加注释，避免维护噪音。
 

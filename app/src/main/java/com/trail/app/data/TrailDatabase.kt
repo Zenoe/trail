@@ -39,6 +39,24 @@ interface TrailDao {
     @Query("SELECT originalFilePath FROM documents WHERE originalFilePath IS NOT NULL") suspend fun originalFiles(): List<String>
     @Query("DELETE FROM documents WHERE id = :id") suspend fun deleteDocument(id: String)
     @Query("UPDATE documents SET publicationState = 'READY' WHERE id = :id") suspend fun publish(id: String)
+    @Query("SELECT * FROM documents WHERE id = :id AND publicationState = 'READY'") suspend fun exportDocument(id: String): DocumentEntity?
+    @Query("SELECT * FROM paths WHERE id = :id") suspend fun exportPath(id: String): PathEntity?
+    @Query("SELECT * FROM paths WHERE documentId = :id ORDER BY ordinal") suspend fun exportPaths(id: String): List<PathEntity>
+    @Query("SELECT * FROM segments WHERE pathId = :pathId ORDER BY ordinal") suspend fun exportSegments(pathId: String): List<SegmentEntity>
+    @Query("SELECT * FROM points WHERE segmentId = :segmentId AND ordinal > :after ORDER BY ordinal LIMIT 512")
+    suspend fun exportPointPage(segmentId: String, after: Int): List<PointEntity>
+    @Query("SELECT * FROM waypoints WHERE documentId = :documentId AND ordinal > :after ORDER BY ordinal LIMIT 256")
+    suspend fun exportWaypointPage(documentId: String, after: Int): List<WaypointEntity>
+    @Query("SELECT * FROM gpx_elements WHERE documentId = :documentId AND ownerType = :type AND ownerKey = :key ORDER BY ordinal")
+    suspend fun exportElements(documentId: String, type: String, key: String): List<GpxElementEntity>
+    @Query("SELECT COUNT(*) FROM paths WHERE documentId = :documentId") suspend fun pathCount(documentId: String): Int
+    @Query("SELECT COUNT(*) FROM waypoints WHERE documentId = :documentId") suspend fun waypointCount(documentId: String): Int
+    @Query("SELECT activeSlot FROM sessions WHERE pathId = :pathId LIMIT 1") suspend fun activeSlot(pathId: String): Int?
+    @Query("UPDATE paths SET name = :name WHERE id = :id") suspend fun renamePath(id: String, name: String)
+    @Query("UPDATE documents SET name = :name WHERE id = :id") suspend fun renameDocument(id: String, name: String)
+    @Query("DELETE FROM paths WHERE id = :id") suspend fun deletePath(id: String)
+    @Query("DELETE FROM gpx_elements WHERE (ownerType = 'PATH' AND ownerKey = :pathId) OR (ownerType = 'SEGMENT' AND ownerKey IN (SELECT id FROM segments WHERE pathId = :pathId))")
+    suspend fun deletePathElements(pathId: String)
 
     // SAX 回调在 IO 线程同步写入有界批次；不能 runBlocking 每个点或在主线程执行。
     @Insert fun insertImported(document: DocumentEntity)

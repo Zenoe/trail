@@ -1,7 +1,12 @@
 package com.trail.app.ui
 
 import android.os.SystemClock
+import android.content.ClipData
+import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -20,6 +26,7 @@ import com.trail.app.domain.*
 import com.trail.app.map.TrailMap
 import com.trail.app.recording.RecordingService
 import com.trail.app.tracks.TrailViewModel
+import com.trail.app.tracks.TrackActionsViewModel
 import com.trail.app.exchange.ImportViewModel
 import kotlinx.coroutines.delay
 import java.time.Instant
@@ -30,7 +37,24 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     openPermissions: () -> Unit, openLocationSettings: () -> Unit, notificationsEnabled: Boolean,
-    importVm: ImportViewModel, pickGpx: () -> Unit) {
+    importVm: ImportViewModel, pickGpx: () -> Unit, actions: TrackActionsViewModel) {
+    val context = LocalContext.current
+    val actionState by actions.state.collectAsStateWithLifecycle()
+    val createGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri -> actions.save(uri) }
+    LaunchedEffect(actionState.ready?.absolutePath) {
+        val file = actionState.ready ?: return@LaunchedEffect
+        actions.launched()
+        if (actionState.share) {
+            try {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                val send = Intent(Intent.ACTION_SEND).setType("application/gpx+xml")
+                    .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                send.clipData = ClipData.newUri(context.contentResolver, "GPX", uri)
+                context.startActivity(Intent.createChooser(send, "分享 GPX"))
+                actions.shareDone()
+            } catch (failure: Exception) { actions.failure("分享失败：${failure.message ?: "无可用应用"}") }
+        } else createGpx.launch(actionState.suggestedName)
+    }
     val ready by vm.ready.collectAsStateWithLifecycle()
     val active by vm.active.collectAsStateWithLifecycle()
     val tracks by vm.tracks.collectAsStateWithLifecycle()
@@ -55,6 +79,14 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var finishDialog by rememberSaveable { mutableStateOf(false) }
     var fit by remember { mutableIntStateOf(0) }
     var savingPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var listFilter by rememberSaveable { mutableStateOf("ALL") }
+    var renameDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf("") }
+    var deleteDialog by remember { mutableStateOf(false) }
+    var exportDialog by remember { mutableStateOf<String?>(null) }
+    var exportWhole by remember { mutableStateOf(false) }
+    var exportWaypoints by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(page) {
         // 进程重建时只恢复页面名不够；详情 ID 不存在时回到列表，避免永久加载空详情。
@@ -73,6 +105,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
         }
     }
     fun showMap() { vm.clearSelection(); page = "map" }
+    fun showList() { vm.clearSelection(); page = "list" }
     BackHandler(page != "map") { showMap() }
     Scaffold(topBar = {
         TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
@@ -110,6 +143,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     val imported = page == "detail" && detailDocument?.source == "IMPORTED"
                     if (page == "detail") {
                         Text(detail?.name ?: detailDocument?.name ?: "正在加载…", style = MaterialTheme.typography.titleLarge)
+                        actionState.message?.let { Notice(it) }
                         Text("${detailStats?.pointCount ?: points.size} 个轨迹点 · ${detailStats?.segmentCount ?: points.map { it.segmentId }.distinct().size} 个分段 · ${detailWaypoints.size} 个标记", style = MaterialTheme.typography.bodySmall)
                         if (imported) Text(if (detail?.kind == "ROUTE") "GPX 计划路线" else if (detail == null) "GPX 标记文件" else "GPX 实测轨迹", style = MaterialTheme.typography.labelLarge)
                         if (detailStats?.warnings?.isNotEmpty() == true) Notice(detailStats!!.warnings)
@@ -156,7 +190,16 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                         OutlinedButton(onClick = pickGpx, modifier = Modifier.fillMaxWidth()) { Text("导入 GPX") }
                     } else {
                         Button(onClick = { vm.loadReference(); showMap(); fit++ }, modifier = Modifier.fillMaxWidth()) { Text("加载到地图") }
-                        Text("绿点：起点 · 红点：终点 · 橙点：标记。GPX 导出将在阶段 3 提供。", style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "save" }, enabled = !actionState.busy) { Text("导出 GPX") }
+                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "share" }, enabled = !actionState.busy) { Text("分享") }
+                        }
+                        if (imported && detailDocument?.originalFilePath != null) TextButton(onClick = { detailDocument?.id?.let(actions::prepareOriginal) }) { Text("分享导入原文件") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { renameText = detail?.name ?: detailDocument?.name.orEmpty(); renameDialog = true }) { Text("重命名") }
+                            TextButton(onClick = { deleteDialog = true }) { Text("删除") }
+                        }
+                        Text("绿点：起点 · 红点：终点 · 橙点：标记。", style = MaterialTheme.typography.bodySmall)
                         detailWaypoints.take(20).forEach { Text("◇ ${it.name ?: "未命名标记"} · ${it.latitude}, ${it.longitude}", style = MaterialTheme.typography.bodySmall) }
                         if (detailWaypoints.size > 20) Text("另有 ${detailWaypoints.size - 20} 个标记已显示在地图中")
                         if (session?.activeSlot == 1) Button(onClick = { showMap() }) { Text("返回当前记录") }
@@ -164,8 +207,24 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 }
             }
             "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("搜索轨迹或标记") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("ALL" to "全部", "RECORDED" to "记录", "IMPORTED" to "导入", "ROUTE" to "路线").forEach { (key, label) ->
+                            FilterChip(selected = listFilter == key, onClick = { listFilter = key }, label = { Text(label) })
+                        }
+                    }
+                    actionState.message?.let { Notice(it) }
+                }
                 if (tracks.isEmpty() && waypointDocuments.isEmpty()) item { Text("第一条轨迹，从这里开始"); Button(onClick = { showMap() }) { Text("去记录") } }
-                items(tracks, key = { it.path.id }) { track ->
+                items(tracks.filter { track ->
+                    track.path.name.contains(query.trim(), ignoreCase = true) && when (listFilter) {
+                        "RECORDED" -> track.source == "RECORDED"
+                        "IMPORTED" -> track.source == "IMPORTED"
+                        "ROUTE" -> track.path.kind == "ROUTE"
+                        else -> true
+                    }
+                }, key = { it.path.id }) { track ->
                     Card(onClick = { vm.selectPath(track.path.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(track.path.name, style = MaterialTheme.typography.titleMedium)
@@ -174,7 +233,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                         }
                     }
                 }
-                items(waypointDocuments, key = { it.document.id }) { item ->
+                items(waypointDocuments.filter { it.document.name.contains(query.trim(), ignoreCase = true) && listFilter in listOf("ALL", "IMPORTED") }, key = { it.document.id }) { item ->
                     Card(onClick = { vm.selectDocument(item.document.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(18.dp)) { Text(item.document.name); Text("${item.waypointCount} 个标记 · 已导入 GPX") }
                     }
@@ -183,17 +242,49 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             "settings" -> Column(Modifier.padding(padding).padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Text("记录精度：均衡（约 3 秒更新）")
                 Text("单位：公里 / 米")
-                Text("存储：本机私有数据库。卸载应用或清除数据会删除轨迹；GPX 导出尚未实现。")
+                Text("存储：本机私有数据库。卸载应用或清除数据会删除轨迹；请定期导出 GPX 备份。")
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("OpenStreetMap 在线底图", Modifier.weight(1f)); Switch(checked = onlineMap, onCheckedChange = vm::setOnlineMap) }
                 Text("开启后向 OpenStreetMap 请求当前区域瓦片，会暴露所查看的区域。仅在线浏览，不提供离线下载；网络不可达时仍能查看本地轨迹。")
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.2.0 · 阶段 2", style = MaterialTheme.typography.labelLarge)
+                Text("山径 0.3.0 · 阶段 3", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
     ImportDialog(importState, importVm::select, importVm::waypoints, importVm::save, importVm::cancel, importVm::openDuplicate)
+    if (exportDialog != null && detailDocument != null) AlertDialog(onDismissRequest = { exportDialog = null },
+        title = { Text(if (exportDialog == "share") "分享 GPX" else "导出 GPX") },
+        text = { Column {
+            if (selectedPath != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = exportWhole, onCheckedChange = { exportWhole = it }); Text("导出此文件的全部路线")
+            }
+            if (detailWaypoints.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = exportWaypoints, onCheckedChange = { exportWaypoints = it }); Text("包含全部 ${detailWaypoints.size} 个标记")
+            }
+            Text("导出为 GPX 1.1，保留路线类型、分段及原始点。", style = MaterialTheme.typography.bodySmall)
+        } },
+        confirmButton = { TextButton(onClick = {
+            val purpose = exportDialog
+            val documentId = detailDocument!!.id
+            val selection = if (exportWhole || selectedPath == null) null else setOf(selectedPath!!)
+            exportDialog = null
+            actions.prepare(documentId, selection, exportWaypoints, purpose == "share")
+        }) { Text("继续") } },
+        dismissButton = { TextButton(onClick = { exportDialog = null }) { Text("取消") } })
+    if (renameDialog) AlertDialog(onDismissRequest = { renameDialog = false }, title = { Text("重命名") },
+        text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("名称") }) },
+        confirmButton = { TextButton(onClick = {
+            selectedPath?.let { actions.renamePath(it, renameText) } ?: selectedDocument?.let { actions.renameDocument(it, renameText) }
+            renameDialog = false
+        }) { Text("保存") } }, dismissButton = { TextButton(onClick = { renameDialog = false }) { Text("取消") } })
+    if (deleteDialog) AlertDialog(onDismissRequest = { deleteDialog = false }, title = { Text("删除这条轨迹？") },
+        text = { Text("会删除本机保存的路线与轨迹点，无法撤销。若文件还有其他路线或标记，将继续保留。") },
+        confirmButton = { TextButton(onClick = {
+            selectedPath?.let { id -> actions.deletePath(id) { vm.clearReferenceIfDeleted(id, null); showList() } }
+                ?: selectedDocument?.let { id -> actions.deleteDocument(id) { vm.clearReferenceIfDeleted(null, id); showList() } }
+            deleteDialog = false
+        }) { Text("删除") } }, dismissButton = { TextButton(onClick = { deleteDialog = false }) { Text("取消") } })
     if (finishDialog) AlertDialog(onDismissRequest = { finishDialog = false }, title = { Text("结束并保存轨迹？") },
         text = { Text("已提交的轨迹点会保存在本机。未获取位置也可以保存空记录。") },
         confirmButton = { TextButton(onClick = {

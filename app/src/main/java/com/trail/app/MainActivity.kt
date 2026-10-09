@@ -18,10 +18,12 @@ import com.trail.app.recording.RecordingService
 import com.trail.app.tracks.TrailViewModel
 import com.trail.app.ui.*
 import com.trail.app.exchange.ImportViewModel
+import com.trail.app.tracks.TrackActionsViewModel
 
 class MainActivity : ComponentActivity() {
     private val vm by viewModels<TrailViewModel>()
     private val importVm by viewModels<ImportViewModel>()
+    private val actions by viewModels<TrackActionsViewModel>()
     private val pickGpx = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(importVm::open) }
     private var pending: Pair<String, ActivityType>? = null
     private val notificationsEnabled = mutableStateOf(true)
@@ -39,7 +41,7 @@ class MainActivity : ComponentActivity() {
             TrailTheme { TrailScreen(vm, ::command,
                 { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
                 { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }, notificationsEnabled.value,
-                importVm, { pickGpx.launch(arrayOf("*/*")) }) }
+                importVm, { pickGpx.launch(arrayOf("*/*")) }, actions) }
         }
     }
     public override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); receiveFile(intent) }

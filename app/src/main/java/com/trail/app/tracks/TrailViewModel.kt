@@ -58,6 +58,9 @@ class TrailViewModel(application: Application, saved: SavedStateHandle) : Androi
     fun selectDocument(id: String) { selectedPath.value = null; selectedDocument.value = id }
     fun loadReference() { referencePath.value = selectedPath.value; referenceDocument.value = selectedDocument.value }
     fun clearReference() { referencePath.value = null; referenceDocument.value = null }
+    fun clearReferenceIfDeleted(pathId: String?, documentId: String?) {
+        if (pathId != null && referencePath.value == pathId || documentId != null && referenceDocument.value == documentId) clearReference()
+    }
 
     init {
         viewModelScope.launch {
