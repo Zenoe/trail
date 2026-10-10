@@ -47,6 +47,17 @@ class RecordingRepository(private val db: TrailDatabase) {
         event(s, "FINISH", wall, elapsed)
     }
 
+    /** 丢弃仅限暂停/中断的当前记录；与 GPS 写入共享服务队列，防止删除后迟到点重新写入。 */
+    suspend fun discardPaused(pathId: String): Boolean = db.withTransaction {
+        val session = dao.active() ?: return@withTransaction false
+        if (session.pathId != pathId || session.state !in setOf(RecordingState.PAUSED, RecordingState.INTERRUPTED)) return@withTransaction false
+        val path = dao.exportPath(pathId) ?: return@withTransaction false
+        dao.deletePathElements(pathId)
+        dao.deletePath(pathId)
+        if (dao.pathCount(path.documentId) == 0 && dao.waypointCount(path.documentId) == 0) dao.deleteDocument(path.documentId)
+        true
+    }
+
     /** 启动时先封存上次进程的单调时钟，绝不能把进程死亡/关机时间计入有效时长。 */
     suspend fun recoverInterrupted(wall: Long) = db.withTransaction {
         val s = dao.active() ?: return@withTransaction

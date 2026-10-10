@@ -26,7 +26,7 @@ class RecordingService : Service() {
     private var foreground = false
 
     private data class Command(val action: String, val activity: ActivityType = ActivityType.HIKE,
-        val sample: LocationSample? = null, val message: String? = null)
+        val sample: LocationSample? = null, val message: String? = null, val pathId: String? = null)
 
     override fun onCreate() {
         super.onCreate()
@@ -67,7 +67,7 @@ class RecordingService : Service() {
                 notificationState = null
             }
             val activity = intent?.getStringExtra(EXTRA_ACTIVITY)?.let { runCatching { ActivityType.valueOf(it) }.getOrNull() } ?: ActivityType.HIKE
-            commands.trySend(Command(intent?.action ?: RECOVER, activity))
+            commands.trySend(Command(intent?.action ?: RECOVER, activity, pathId = intent?.getStringExtra(EXTRA_PATH_ID)))
         } catch (failure: Exception) {
             app.recordingError.value = "无法开启定位服务，请允许精确定位并从应用内开始记录。"
             stopSelf()
@@ -84,6 +84,7 @@ class RecordingService : Service() {
                 PAUSE -> repo.pause(wall, elapsed)
                 RESUME -> repo.resume(wall, elapsed)
                 FINISH -> repo.finish(wall, elapsed)
+                DISCARD -> command.pathId?.let { repo.discardPaused(it) }
                 FIX -> command.sample?.let { repo.sample(it, wall, elapsed) }
                 TICK -> repo.heartbeat(wall, elapsed)
                 RECOVER -> repo.recoverInterrupted(wall)
@@ -142,7 +143,9 @@ class RecordingService : Service() {
         const val PAUSE = "com.trail.PAUSE"
         const val RESUME = "com.trail.RESUME"
         const val FINISH = "com.trail.FINISH"
+        const val DISCARD = "com.trail.DISCARD"
         const val EXTRA_ACTIVITY = "activity"
+        const val EXTRA_PATH_ID = "pathId"
         private const val FIX = "FIX"
         private const val TICK = "TICK"
         private const val RECOVER = "RECOVER"

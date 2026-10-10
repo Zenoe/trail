@@ -101,4 +101,17 @@ class RecordingRepositoryTest {
             assertEquals(RecordingState.INTERRUPTED, diskRepo.dao.active()!!.state)
         } finally { disk.close(); context.deleteDatabase(name) }
     }
+
+    @Test fun onlyPausedCurrentRecordingCanBeDiscarded() = runBlocking {
+        repo.start(ActivityType.HIKE, wall, 0)
+        val pathId = repo.dao.active()!!.pathId
+        repo.sample(fix(1_000), wall + 1_000, 1_000)
+        assertFalse(repo.discardPaused(pathId))
+        assertFalse(repo.discardPaused("other-path"))
+        repo.pause(wall + 2_000, 2_000)
+        assertTrue(repo.discardPaused(pathId))
+        assertNull(repo.dao.active())
+        assertEquals(0, repo.dao.pointCount())
+        assertNull(repo.dao.exportPath(pathId))
+    }
 }

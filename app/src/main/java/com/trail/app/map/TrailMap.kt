@@ -21,13 +21,14 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.*
 
 @Composable
-fun TrailMap(points: List<PointEntity>, fitRequest: Int, modifier: Modifier = Modifier,
+fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, zoomIn: Boolean = true, modifier: Modifier = Modifier,
     reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), online: Boolean = false) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val view = remember { MapLibre.getInstance(context); MapView(context).apply { onCreate(Bundle()) } }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var loaded by remember { mutableIntStateOf(0) }
+    var appliedZoomRequest by remember { mutableIntStateOf(zoomRequest) }
     DisposableEffect(view, lifecycle) {
         val observer = LifecycleEventObserver { _, event -> when (event) {
             Lifecycle.Event.ON_START -> view.onStart(); Lifecycle.Event.ON_RESUME -> view.onResume()
@@ -42,8 +43,10 @@ fun TrailMap(points: List<PointEntity>, fitRequest: Int, modifier: Modifier = Mo
     LaunchedEffect(map, online) {
         loaded = 0
         map?.let { ready ->
-            ready.uiSettings.isAttributionEnabled = online
+            // MapLibre 默认署名点会弹出 SDK 信息；本应用在地图外直接展示底图来源，避免误触。
+            ready.uiSettings.isAttributionEnabled = false
             ready.uiSettings.isLogoEnabled = false
+            ready.uiSettings.isCompassEnabled = false
             ready.setStyle(Style.Builder().fromJson(if (online) MapSource.OSM_STYLE else MapSource.LOCAL_STYLE)) { style ->
                 listOf("track", "reference", "markers", "starts", "ends").forEach { style.addSource(GeoJsonSource(it, FeatureCollection.fromFeatures(emptyArray<Feature>()))) }
                 // 当前 MapLibre/SwiftShader 组合在空 GeoJSON 源后追加虚线时仅绘制端点；实线保证参考几何可见。
@@ -83,6 +86,12 @@ fun TrailMap(points: List<PointEntity>, fitRequest: Int, modifier: Modifier = Mo
         val extent = MapGeometry.extent(coordinates) ?: return@LaunchedEffect
         if (extent.north == extent.south && extent.east == extent.west) map?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(extent.north, extent.west), 16.0))
         else map?.moveCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.from(extent.north, extent.east, extent.south, extent.west), 50))
+    }
+    LaunchedEffect(zoomRequest, loaded) {
+        if (loaded > 0 && zoomRequest != appliedZoomRequest) {
+            appliedZoomRequest = zoomRequest
+            map?.animateCamera(if (zoomIn) CameraUpdateFactory.zoomIn() else CameraUpdateFactory.zoomOut())
+        }
     }
     AndroidView(factory = { view }, modifier = modifier)
 }

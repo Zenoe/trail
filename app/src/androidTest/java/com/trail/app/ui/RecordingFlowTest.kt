@@ -39,8 +39,8 @@ class RecordingFlowTest {
         screenshot("detail")
         compose.onNodeWithText("轨迹").performClick()
         waitFor("我的轨迹")
-        waitFor("已保存 · 本机")
-        compose.onAllNodesWithText("已保存 · 本机").onFirst().assertExists()
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("已保存", substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("已保存", substring = true).onFirst().assertExists()
     }
     private fun screenshot(name: String) {
         compose.waitForIdle()

@@ -8,6 +8,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,10 +19,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trail.app.data.*
 import com.trail.app.domain.*
@@ -32,6 +46,8 @@ import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,12 +94,15 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var activity by rememberSaveable { mutableStateOf(ActivityType.HIKE.name) }
     var finishDialog by rememberSaveable { mutableStateOf(false) }
     var fit by remember { mutableIntStateOf(0) }
+    var zoomRequest by remember { mutableIntStateOf(0) }
+    var zoomIn by remember { mutableStateOf(true) }
+    var fullMap by rememberSaveable { mutableStateOf(false) }
     var savingPath by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var listFilter by rememberSaveable { mutableStateOf("ALL") }
     var renameDialog by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
-    var deleteDialog by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<Pair<String, Boolean>?>(null) } // id、是否为纯标记文件
     var exportDialog by remember { mutableStateOf<String?>(null) }
     var exportWhole by remember { mutableStateOf(false) }
     var exportWaypoints by remember { mutableStateOf(false) }
@@ -106,21 +125,50 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     }
     fun showMap() { vm.clearSelection(); page = "map" }
     fun showList() { vm.clearSelection(); page = "list" }
-    BackHandler(page != "map") { showMap() }
+    fun deleteFromList(id: String, document: Boolean) {
+        if (active?.pathId == id) {
+            if (active?.state == RecordingState.PAUSED || active?.state == RecordingState.INTERRUPTED) {
+                command(RecordingService.DISCARD, ActivityType.valueOf(activity))
+                vm.clearReferenceIfDeleted(id, null)
+            } else actions.failure("请先暂停记录，再删除轨迹")
+        } else if (document) actions.deleteDocument(id) { vm.clearReferenceIfDeleted(null, id) }
+        else actions.deletePath(id) { vm.clearReferenceIfDeleted(id, null) }
+    }
+    BackHandler(fullMap || page != "map") { if (fullMap) fullMap = false else showMap() }
     Scaffold(topBar = {
-        TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
+        if (!fullMap) TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
             navigationIcon = { if (page == "detail" || page == "settings") TextButton(onClick = { showMap() }) { Text("返回") } },
             actions = {
                 if (page == "list") TextButton(onClick = pickGpx) { Text("导入 GPX") }
                 if (page == "map") TextButton(onClick = { page = "settings" }) { Text("设置") }
             })
     }, bottomBar = {
-        NavigationBar {
+        if (!fullMap) NavigationBar {
             NavigationBarItem(selected = page == "map", onClick = { showMap() }, icon = { Text("⌖") }, label = { Text("地图") })
             NavigationBarItem(selected = page == "list" || page == "detail", onClick = { vm.clearSelection(); page = "list" }, icon = { Text("≋") }, label = { Text("轨迹") })
         }
     }) { padding ->
         if (!ready) { Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) { Text(error ?: "正在打开本地轨迹…") }; return@Scaffold }
+        if (fullMap && (page == "map" || page == "detail")) {
+            Box(Modifier.padding(padding).fillMaxSize()) {
+                TrailMap(points, fit, zoomRequest, zoomIn, Modifier.fillMaxSize(),
+                    reference = if (page == "map") referencePoints else emptyList(),
+                    waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap)
+                val latest = points.lastOrNull { it.accepted }
+                Text(mapPositionText(latest), Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                    .background(Color(0xDDF7F8F4)).padding(horizontal = 12.dp, vertical = 5.dp),
+                    fontSize = 12.sp, color = Color(0xFF25392F), maxLines = 1)
+                MapControl("退出全屏", "close", Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 42.dp)) { fullMap = false }
+                MapControl("查看全程", "fit", Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 42.dp)) { fit++ }
+                Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MapControl("放大", "plus") { zoomIn = true; zoomRequest++ }
+                    MapControl("缩小", "minus") { zoomIn = false; zoomRequest++ }
+                }
+                if (onlineMap) Text("© OpenStreetMap contributors", modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                    style = MaterialTheme.typography.labelSmall)
+            }
+            return@Scaffold
+        }
         when (page) {
             "map", "detail" -> Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
                 if (error != null && page == "map") {
@@ -129,12 +177,13 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 }
                 if (!notificationsEnabled && active != null && page == "map") Notice("通知未开启，后台记录提示可能不可见；可在权限设置中开启。")
                 key(if (page == "detail") selectedPath ?: selectedDocument else "live") {
-                    TrailMap(points, fit, Modifier.fillMaxWidth().height(220.dp),
+                    TrailMap(points, fit, zoomRequest, zoomIn, Modifier.fillMaxWidth().height(220.dp),
                         reference = if (page == "map") referencePoints else emptyList(),
                         waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap)
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (onlineMap) mapStatus else "离线轨迹视图 · 无底图", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                    Text(if (onlineMap) "$mapStatus · © OpenStreetMap contributors" else "离线轨迹视图 · 无底图", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { fullMap = true }) { Text("全屏") }
                     TextButton(onClick = { fit++ }) { Text("查看全程") }
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -186,6 +235,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                                 Text(if (RecordingRules.canPause(active!!.state)) "暂停记录" else "继续记录")
                             }
                             OutlinedButton(onClick = { finishDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("结束并保存") }
+                            if (state == RecordingState.PAUSED || state == RecordingState.INTERRUPTED) {
+                                TextButton(onClick = { deleteTarget = active!!.pathId to false }) { Text("丢弃暂停记录") }
+                            }
                         }
                         OutlinedButton(onClick = pickGpx, modifier = Modifier.fillMaxWidth()) { Text("导入 GPX") }
                     } else {
@@ -197,7 +249,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                         if (imported && detailDocument?.originalFilePath != null) TextButton(onClick = { detailDocument?.id?.let(actions::prepareOriginal) }) { Text("分享导入原文件") }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { renameText = detail?.name ?: detailDocument?.name.orEmpty(); renameDialog = true }) { Text("重命名") }
-                            TextButton(onClick = { deleteDialog = true }) { Text("删除") }
+                            TextButton(onClick = { selectedPath?.let { deleteTarget = it to false } ?: selectedDocument?.let { deleteTarget = it to true } }) { Text("删除") }
                         }
                         Text("绿点：起点 · 红点：终点 · 橙点：标记。", style = MaterialTheme.typography.bodySmall)
                         detailWaypoints.take(20).forEach { Text("◇ ${it.name ?: "未命名标记"} · ${it.latitude}, ${it.longitude}", style = MaterialTheme.typography.bodySmall) }
@@ -206,7 +258,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     }
                 }
             }
-            "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
                     OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("搜索轨迹或标记") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -225,17 +277,25 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                         else -> true
                     }
                 }, key = { it.path.id }) { track ->
-                    Card(onClick = { vm.selectPath(track.path.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(track.path.name, style = MaterialTheme.typography.titleMedium)
-                            Text("${distanceText(track.distanceM)} 公里 · ${(track.activeDurationMs ?: track.elapsedMs)?.let(::durationText) ?: "—"}")
-                            Text(if (track.source == "IMPORTED") "已导入 · GPX" else if (track.state == RecordingState.FINISHED) "已保存 · 本机" else "未结束 · ${track.state?.let(::stateLabel) ?: "—"}", style = MaterialTheme.typography.bodySmall)
+                    SwipeDeleteRow(onDelete = { deleteFromList(track.path.id, false) }) {
+                        Card(onClick = { vm.selectPath(track.path.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(track.path.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                Text("${distanceText(track.distanceM)} 公里 · ${(track.activeDurationMs ?: track.elapsedMs)?.let(::durationText) ?: "—"} · " +
+                                    if (track.source == "IMPORTED") "导入 GPX" else if (track.state == RecordingState.FINISHED) "已保存" else "${track.state?.let(::stateLabel) ?: "未结束"}",
+                                    style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            }
                         }
                     }
                 }
                 items(waypointDocuments.filter { it.document.name.contains(query.trim(), ignoreCase = true) && listFilter in listOf("ALL", "IMPORTED") }, key = { it.document.id }) { item ->
-                    Card(onClick = { vm.selectDocument(item.document.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp)) { Text(item.document.name); Text("${item.waypointCount} 个标记 · 已导入 GPX") }
+                    SwipeDeleteRow(onDelete = { deleteFromList(item.document.id, true) }) {
+                        Card(onClick = { vm.selectDocument(item.document.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(item.document.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                Text("${item.waypointCount} 个标记 · 导入 GPX", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
                     }
                 }
             }
@@ -278,13 +338,17 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             selectedPath?.let { actions.renamePath(it, renameText) } ?: selectedDocument?.let { actions.renameDocument(it, renameText) }
             renameDialog = false
         }) { Text("保存") } }, dismissButton = { TextButton(onClick = { renameDialog = false }) { Text("取消") } })
-    if (deleteDialog) AlertDialog(onDismissRequest = { deleteDialog = false }, title = { Text("删除这条轨迹？") },
-        text = { Text("会删除本机保存的路线与轨迹点，无法撤销。若文件还有其他路线或标记，将继续保留。") },
+    if (deleteTarget != null) AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("删除这条轨迹？") },
+        text = { Text(if (active?.pathId == deleteTarget?.first) "这条暂停的记录会被丢弃，无法恢复。" else "会删除本机保存的路线与轨迹点，无法撤销。若文件还有其他路线或标记，将继续保留。") },
         confirmButton = { TextButton(onClick = {
-            selectedPath?.let { id -> actions.deletePath(id) { vm.clearReferenceIfDeleted(id, null); showList() } }
-                ?: selectedDocument?.let { id -> actions.deleteDocument(id) { vm.clearReferenceIfDeleted(null, id); showList() } }
-            deleteDialog = false
-        }) { Text("删除") } }, dismissButton = { TextButton(onClick = { deleteDialog = false }) { Text("取消") } })
+            val target = deleteTarget!!
+            if (active?.pathId == target.first && active?.state in listOf(RecordingState.PAUSED, RecordingState.INTERRUPTED)) {
+                command(RecordingService.DISCARD, ActivityType.valueOf(activity)); vm.clearReferenceIfDeleted(target.first, null); showList()
+            } else if (target.second) actions.deleteDocument(target.first) { vm.clearReferenceIfDeleted(null, target.first); if (page == "detail") showList() }
+            else actions.deletePath(target.first) { vm.clearReferenceIfDeleted(target.first, null); if (page == "detail") showList() }
+            deleteTarget = null
+        }, enabled = active?.pathId != deleteTarget?.first || active?.state in listOf(RecordingState.PAUSED, RecordingState.INTERRUPTED)) { Text("删除") } },
+        dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } })
     if (finishDialog) AlertDialog(onDismissRequest = { finishDialog = false }, title = { Text("结束并保存轨迹？") },
         text = { Text("已提交的轨迹点会保存在本机。未获取位置也可以保存空记录。") },
         confirmButton = { TextButton(onClick = {
@@ -295,6 +359,69 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
 
 @Composable private fun Notice(text: String) { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
 @Composable private fun Metric(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelMedium); Text(value, style = MaterialTheme.typography.headlineSmall) } }
+private fun mapPositionText(point: PointEntity?): String = if (point == null) "纬度 —   经度 —   海拔 —" else
+    "纬度 ${String.format(Locale.US, "%.5f", point.latitude)}°   经度 ${String.format(Locale.US, "%.5f", point.longitude)}°   海拔 ${point.elevationM?.let { String.format(Locale.US, "%.0f m", it) } ?: "—"}"
+
+@Composable private fun MapControl(label: String, kind: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(Color(0x990F1C19))
+        .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(14.dp)) {
+            val stroke = 2.8.dp.toPx()
+            val mid = size.width / 2
+            if (kind == "plus" || kind == "minus") drawLine(Color.White, Offset(2f, mid), Offset(size.width - 2f, mid), stroke)
+            when (kind) {
+                "plus" -> drawLine(Color.White, Offset(mid, 2f), Offset(mid, size.height - 2f), stroke)
+                "fit" -> {
+                    drawLine(Color.White, Offset(2f, 2f), Offset(2f, mid - 4f), stroke)
+                    drawLine(Color.White, Offset(2f, 2f), Offset(mid - 4f, 2f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, 2f), Offset(size.width - 2f, mid - 4f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, 2f), Offset(mid + 4f, 2f), stroke)
+                    drawLine(Color.White, Offset(2f, size.height - 2f), Offset(2f, mid + 4f), stroke)
+                    drawLine(Color.White, Offset(2f, size.height - 2f), Offset(mid - 4f, size.height - 2f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, size.height - 2f), Offset(size.width - 2f, mid + 4f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, size.height - 2f), Offset(mid + 4f, size.height - 2f), stroke)
+                }
+                "close" -> {
+                    drawLine(Color.White, Offset(2f, 2f), Offset(size.width - 2f, size.height - 2f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, 2f), Offset(2f, size.height - 2f), stroke)
+                }
+            }
+        }
+        // 绘制与命中区域分离：透明叠层保留 52dp 触控面积，不让小图标变得难点。
+        TextButton(onClick = onClick, modifier = Modifier.fillMaxSize()) { }
+    }
+}
+
+@Composable private fun SwipeDeleteRow(onDelete: () -> Unit, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val focus = LocalFocusManager.current
+    val buttonWidth = 76.dp
+    val maxPx = with(density) { buttonWidth.toPx() }
+    var revealed by remember { mutableStateOf(false) }
+    var offsetPx by remember { mutableFloatStateOf(0f) }
+    Box(Modifier.fillMaxWidth()) {
+        if (offsetPx > 0f) Button(onClick = onDelete, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC9433C)),
+            contentPadding = PaddingValues(0.dp), shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.align(Alignment.CenterEnd).width(buttonWidth).height(64.dp)
+                .semantics { contentDescription = "删除轨迹" }) { Text("删除", color = Color.White) }
+        Box(Modifier.fillMaxWidth().offset { IntOffset(-offsetPx.roundToInt(), 0) }
+            .pointerInput(maxPx) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { change, drag ->
+                        // 仅在横向拖动时接管手势；向右可合上，纵向仍由列表滚动处理。
+                        offsetPx = (offsetPx - drag).coerceIn(0f, maxPx)
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        revealed = offsetPx > maxPx * 0.38f
+                        offsetPx = if (revealed) maxPx else 0f
+                        if (revealed) focus.clearFocus() // 搜索后滑卡片时收起输入法，避免遮住删除按钮。
+                    },
+                    onDragCancel = { offsetPx = if (revealed) maxPx else 0f }
+                )
+            }) { content() }
+    }
+}
 private fun timeText(time: Long) = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(time))
 private fun stateLabel(state: RecordingState) = when (state) {
     RecordingState.WAITING -> "等待定位 / 信号不足"

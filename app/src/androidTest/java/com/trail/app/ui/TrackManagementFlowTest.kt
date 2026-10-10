@@ -30,6 +30,14 @@ class TrackManagementFlowTest {
             waitFor("保存所选")
             compose.onNodeWithText("保存所选").performClick()
             waitFor("轨迹详情")
+            compose.onNodeWithText("全屏").performClick()
+            compose.onNodeWithText("纬度", substring = true).assertExists()
+            screenshot("full-map")
+            compose.onNodeWithContentDescription("放大").performClick()
+            compose.onNodeWithContentDescription("缩小").performClick()
+            compose.onNodeWithContentDescription("查看全程").performClick()
+            compose.onNodeWithContentDescription("退出全屏").performClick()
+            waitFor("重命名")
             compose.onNodeWithText("重命名").performScrollTo().performClick()
             compose.onNode(hasSetTextAction()).performTextClearance()
             compose.onNode(hasSetTextAction()).performTextInput(title)
@@ -54,6 +62,12 @@ class TrackManagementFlowTest {
             compose.waitUntil(15_000) { compose.onAllNodesWithText(title).fetchSemanticsNodes().size == 1 }
             compose.onNode(hasSetTextAction()).performTextClearance()
             waitFor("返程路线 · 测试") // 同一 GPX 的另一条路线没有被级联误删。
+            val beforeSwipeDelete = compose.onAllNodesWithText("返程路线 · 测试").fetchSemanticsNodes().size
+            compose.onAllNodesWithText("返程路线 · 测试").onLast().performTouchInput { swipeLeft() }
+            compose.waitUntil(15_000) { compose.onAllNodesWithContentDescription("删除轨迹").fetchSemanticsNodes().isNotEmpty() }
+            screenshot("swipe-delete")
+            compose.onAllNodesWithContentDescription("删除轨迹").onLast().performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithText("返程路线 · 测试").fetchSemanticsNodes().size == beforeSwipeDelete - 1 }
         } finally {
             compose.activityRule.scenario.onActivity { it.intent = originalIntent }
             file.delete()
