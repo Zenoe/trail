@@ -148,6 +148,21 @@ class RecordingRepositoryTest {
         assertNull(repo.dao.exportPath(pathId))
     }
 
+    @Test fun elevationTotalsPersistAndDoNotBridgePause() = runBlocking {
+        repo.start(ActivityType.HIKE, wall, 0)
+        val path = repo.dao.active()!!.pathId
+        suspend fun elevation(t: Long, h: Double) = repo.sample(fix(t).copy(altitudeM = h), wall + t, t)
+        elevation(1_000, 100.0); elevation(4_000, 100.0)
+        elevation(7_000, 110.0); elevation(10_000, 100.0)
+        repo.pause(wall + 11_000, 11_000)
+        repo.resume(wall + 20_000, 20_000)
+        elevation(21_000, 500.0); elevation(24_000, 500.0); elevation(27_000, 490.0)
+        repo.finish(wall + 28_000, 28_000)
+        val saved = repo.dao.observeSession(path).first()!!
+        assertEquals(10.0, saved.ascentM!!, 0.001)
+        assertEquals(20.0, saved.descentM!!, 0.001)
+    }
+
     @Test fun endDiscardRemovesRecordingAndIgnoresLateSamplesAndOldCommands() = runBlocking {
         repo.start(ActivityType.HIKE, wall, 0)
         val oldPath = repo.dao.active()!!.pathId

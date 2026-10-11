@@ -12,8 +12,8 @@ android {
         applicationId = "com.trail.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.1-beta"
+        versionCode = 8
+        versionName = "0.4.2-beta"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {

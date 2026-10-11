@@ -39,7 +39,7 @@ class TrailApplication : Application() {
         maps = MapSource(this)
         gps = GpsSubscriptionHub(AndroidLocationSource(this))
         liveLocation = LiveLocationTracker(this, gps.handle())
-        val db = Room.databaseBuilder(this, TrailDatabase::class.java, "trail.db").addMigrations(Migrations.FROM_1_TO_2).build()
+        val db = Room.databaseBuilder(this, TrailDatabase::class.java, "trail.db").addMigrations(Migrations.FROM_1_TO_2, Migrations.FROM_2_TO_3).build()
         repository = RecordingRepository(db)
         imports = GpxImportRepository(db, File(filesDir, "gpx"))
         exports = GpxExportRepository(db, cacheDir)

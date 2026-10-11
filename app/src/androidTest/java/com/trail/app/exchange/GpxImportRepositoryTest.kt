@@ -25,6 +25,13 @@ class GpxImportRepositoryTest {
     @After fun cleanup() { db.close(); root.deleteRecursively() }
     private suspend fun draft(text: String = body) = imports.prepare("测试.gpx", { text.byteInputStream() })
 
+    @Test fun elevationTotalsArePublishedWithImportedTrack() = runBlocking {
+        val result = imports.publish(draft("""<gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="test"><trk><trkseg><trkpt lat="1" lon="103"><ele>100</ele></trkpt><trkpt lat="1" lon="103"><ele>120</ele></trkpt><trkpt lat="1" lon="103"><ele>110</ele></trkpt></trkseg></trk></gpx>"""), setOf(0), false)
+        val stats = db.dao().observeImportStats(result.firstPathId!!).first()!!
+        assertEquals(20.0, stats.ascentM!!, 0.001)
+        assertEquals(10.0, stats.descentM!!, 0.001)
+    }
+
     @Test fun mixedImportPreservesSegmentsExtensionsAndActiveRecording() = runBlocking {
         val recording = RecordingRepository(db)
         recording.start(ActivityType.RUN, 1_000, 1_000)

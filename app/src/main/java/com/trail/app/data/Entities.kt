@@ -50,6 +50,7 @@ data class SessionEntity(
     val acceptingSinceMs: Long = 0, val lastFixElapsedMs: Long? = null,
     val segmentId: String? = null, val distanceM: Double = 0.0,
     val accuracyM: Float? = null, val elevationM: Double? = null,
+    val ascentM: Double? = null, val descentM: Double? = null, val elevationAnchorM: Double? = null,
 )
 
 @Entity(tableName = "recording_events", foreignKeys = [ForeignKey(entity = SessionEntity::class,
@@ -72,7 +73,8 @@ data class WaypointEntity(@PrimaryKey val id: String, val documentId: String, va
 @Entity(tableName = "import_stats", foreignKeys = [ForeignKey(entity = PathEntity::class,
     parentColumns = ["id"], childColumns = ["pathId"], onDelete = ForeignKey.CASCADE)])
 data class ImportStatsEntity(@PrimaryKey val pathId: String, val distanceM: Double, val elapsedMs: Long?,
-    val pointCount: Int, val segmentCount: Int, val warnings: String)
+    val pointCount: Int, val segmentCount: Int, val warnings: String,
+    val ascentM: Double? = null, val descentM: Double? = null)
 
 /** 元数据/未知扩展以带命名空间的 XML 子树保存；ownerKey 不含用户文件路径。 */
 @Entity(tableName = "gpx_elements", foreignKeys = [ForeignKey(entity = DocumentEntity::class,

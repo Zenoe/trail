@@ -18,7 +18,8 @@ sealed interface GpxEvent {
 }
 
 data class GpxPathPreview(val index: Int, val kind: String, val name: String,
-    val points: Int, val segments: Int, val distanceM: Double, val elapsedMs: Long?, val warnings: List<String>)
+    val points: Int, val segments: Int, val distanceM: Double, val elapsedMs: Long?, val warnings: List<String>,
+    val ascentM: Double? = null, val descentM: Double? = null)
 data class GpxPreview(val version: String, val creator: String?, val paths: List<GpxPathPreview>,
     val waypointCount: Int, val warnings: List<String>)
 class GpxException(message: String, cause: Throwable? = null) : Exception(message, cause)

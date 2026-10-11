@@ -4,6 +4,32 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 object Migrations {
+    val FROM_2_TO_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            listOf("sessions", "import_stats").forEach { table ->
+                db.execSQL("ALTER TABLE $table ADD COLUMN ascentM REAL")
+                db.execSQL("ALTER TABLE $table ADD COLUMN descentM REAL")
+            }
+            db.execSQL("ALTER TABLE sessions ADD COLUMN elevationAnchorM REAL")
+            // 游标逐点回填老轨迹；无需把长轨迹载入内存，原始高程与 GPX 数据保持不变。
+            db.query("SELECT id FROM paths").use { paths -> while (paths.moveToNext()) {
+                val path = paths.getString(0)
+                var totals = com.trail.app.domain.ElevationTotals()
+                var segment: String? = null
+                db.query("SELECT p.segmentId, p.elevationM, p.accepted FROM points p JOIN segments s ON p.segmentId=s.id WHERE s.pathId=? ORDER BY s.ordinal, p.ordinal", arrayOf(path)).use { points ->
+                    while (points.moveToNext()) {
+                        val nextSegment = points.getString(0)
+                        if (nextSegment != segment) totals = totals.copy(anchorM = null)
+                        segment = nextSegment
+                        totals = totals.next(if (points.isNull(1) || points.getInt(2) == 0) null else points.getDouble(1))
+                    }
+                }
+                listOf("sessions", "import_stats").forEach { table ->
+                    db.execSQL("UPDATE $table SET ascentM=?, descentM=? WHERE pathId=?", arrayOf(totals.ascentM, totals.descentM, path))
+                }
+            } }
+        }
+    }
     /** 只添加字段和表，阶段 1 的记录/分段/计时原样保留，绝不清库“修复”。 */
     val FROM_1_TO_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {

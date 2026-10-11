@@ -84,6 +84,6 @@ interface TrailDao {
 
 @Database(entities = [DocumentEntity::class, PathEntity::class, SegmentEntity::class,
     PointEntity::class, SessionEntity::class, RecordingEventEntity::class, WaypointEntity::class,
-    ImportStatsEntity::class, GpxElementEntity::class], version = 2, exportSchema = true)
+    ImportStatsEntity::class, GpxElementEntity::class], version = 3, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class TrailDatabase : RoomDatabase() { abstract fun dao(): TrailDao }

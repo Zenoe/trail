@@ -84,7 +84,7 @@ class GpxImportRepository(private val db: TrailDatabase, private val root: File,
                         is GpxEvent.PathStart -> pathIds[event.index]?.let { pathId ->
                             val item = draft.preview.paths.first { it.index == event.index }
                             dao.insertImported(PathEntity(pathId, documentId, item.name, ActivityType.HIKE, now, event.index, item.kind))
-                            dao.insertImported(ImportStatsEntity(pathId, item.distanceM, item.elapsedMs, item.points, item.segments, item.warnings.joinToString("\n")))
+                            dao.insertImported(ImportStatsEntity(pathId, item.distanceM, item.elapsedMs, item.points, item.segments, item.warnings.joinToString("\n"), item.ascentM, item.descentM))
                         }
                         is GpxEvent.SegmentStart -> pathIds[event.path]?.let { pathId ->
                             val segmentId = UUID.randomUUID().toString()

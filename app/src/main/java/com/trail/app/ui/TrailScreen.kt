@@ -170,8 +170,12 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             val duration = session.activeDurationMs + if (session.state == RecordingState.RECORDING) RecordingRules.durationDelta(session.lastElapsedMs, cappedNow) else 0
             Column(Modifier.padding(padding).fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(distanceText(session.distanceM), style = MaterialTheme.typography.headlineSmall); Text("距离 · 公里", style = MaterialTheme.typography.labelSmall) }
-                    Column(Modifier.weight(1f)) { Text(durationText(duration), style = MaterialTheme.typography.headlineSmall); Text("有效时间 · ${stateLabel(session.state)}", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                    Column(Modifier.weight(1f)) { Text(compactLength(session.distanceM), fontSize = 22.sp, maxLines = 1); Text("距离", style = MaterialTheme.typography.labelSmall) }
+                    Column(Modifier.weight(0.9f).semantics { contentDescription = "累计上升 ${compactLength(session.ascentM)}，累计下降 ${compactLength(session.descentM)}" }) {
+                        Text("↑ ${compactLength(session.ascentM)}", fontSize = 15.sp, maxLines = 1)
+                        Text("↓ ${compactLength(session.descentM)}", fontSize = 15.sp, maxLines = 1)
+                    }
+                    Column(Modifier.weight(1.3f)) { Text(durationText(duration), fontSize = 22.sp, maxLines = 1); Text("有效时间 · ${stateLabel(session.state)}", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
                 }
                 Text(mapPositionText(currentLocation), Modifier.fillMaxWidth().background(Color(0xDDF7F8F4))
                     .padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 12.sp, maxLines = 1)
@@ -274,6 +278,11 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                             if (imported) detailStats?.elapsedMs?.let { speedText(distance ?: 0.0, it) } ?: "—"
                             else if (currentActivity == ActivityType.RUN) paceText(session?.distanceM ?: 0.0, displayedDuration) else speedText(session?.distanceM ?: 0.0, displayedDuration)) }
                     }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Box(Modifier.weight(1f)) { Metric("累计上升", compactLength(if (imported) detailStats?.ascentM else session?.ascentM)) }
+                        Box(Modifier.weight(1f)) { Metric("累计下降", compactLength(if (imported) detailStats?.descentM else session?.descentM)) }
+                    }
+                    Text("升降为海拔估算，已过滤小幅波动；缺失海拔和分段处不跨段累计。", style = MaterialTheme.typography.labelSmall)
                     if (!imported) Text("GPS 高程（未校正）：" + (session?.elevationM?.let { "%.0f 米".format(it) } ?: "—"), style = MaterialTheme.typography.bodySmall)
                     else Text("累计爬升：—（尚未计算）", style = MaterialTheme.typography.bodySmall)
                     if (page == "map") {
@@ -358,7 +367,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.4.1 · 室内位置预览", style = MaterialTheme.typography.labelLarge)
+                Text("山径 0.4.2 · 累计升降", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

@@ -106,8 +106,13 @@ class RecordingRepository(private val db: TrailDatabase) {
             fix.wallTimeMs, fix.altitudeM?.takeIf { it.isFinite() }, fix.accuracyM,
             fix.speedMps?.takeIf { it.isFinite() && it >= 0 }, fix.elapsedMs, good))
         val updated = advance(s, wall, elapsed)
+        // 分段、拒收或缺失海拔均切断高程累计，暂停前后的高差不能作为真实爬升。
+        val elevation = ElevationTotals(s.ascentM, s.descentM,
+            if (s.segmentId == segmentId && previous?.accepted == true) s.elevationAnchorM else null)
+            .next(if (good) fix.altitudeM else null)
         dao.update(updated.copy(state = if (good) RecordingState.RECORDING else RecordingState.WAITING,
             segmentId = segmentId, distanceM = s.distanceM + addition,
+            ascentM = elevation.ascentM, descentM = elevation.descentM, elevationAnchorM = elevation.anchorM,
             lastElapsedMs = if (good) elapsed else null,
             lastFixElapsedMs = fix.elapsedMs, accuracyM = fix.accuracyM, elevationM = fix.altitudeM))
     }

@@ -184,7 +184,8 @@ class GpxReader(private val limits: GpxLimits = GpxLimits()) {
         data class MutablePath(val index: Int, val kind: String, var name: String = "", var points: Int = 0,
             var segments: Int = 0, var distance: Double = 0.0, var firstTime: Long? = null,
             var lastTime: Long? = null, var completeTime: Boolean = true, var previous: GpxPoint? = null,
-            var pointsInSegment: Int = 0, val warnings: MutableSet<String> = linkedSetOf())
+            var pointsInSegment: Int = 0, val warnings: MutableSet<String> = linkedSetOf(),
+            var elevation: com.trail.app.domain.ElevationTotals = com.trail.app.domain.ElevationTotals())
         var version = ""; var creator: String? = null; var waypoints = 0
         val paths = mutableListOf<MutablePath>()
         fun accept(event: GpxEvent) {
@@ -194,11 +195,13 @@ class GpxReader(private val limits: GpxLimits = GpxLimits()) {
                 is GpxEvent.SegmentStart -> paths[event.path].apply {
                     if (segments > 0 && pointsInSegment == 0) warnings.add("包含空分段")
                     segments++; previous = null; pointsInSegment = 0
+                    elevation = elevation.copy(anchorM = null)
                 }
                 is GpxEvent.Element -> if (event.owner.type == "PATH" && event.name == "name") paths[event.owner.path].name = event.value.trim()
                 is GpxEvent.Position -> {
                     if (event.owner.type == "WAYPOINT") { waypoints++; return }
                     val p = paths[event.owner.path]; val point = event.value
+                    p.elevation = p.elevation.next(point.elevation)
                     p.previous?.let {
                         val distance = RecordingRules.distance(it.lat, it.lon, point.lat, point.lon)
                         p.distance += distance
@@ -221,7 +224,8 @@ class GpxReader(private val limits: GpxLimits = GpxLimits()) {
             return GpxPreview(version, creator, paths.map {
                 if (it.pointsInSegment == 0 && it.segments > 0) it.warnings.add("包含空分段")
                 GpxPathPreview(it.index, it.kind, it.name.ifBlank { "${if (it.kind == "TRACK") "轨迹" else "路线"} ${it.index + 1}" },
-                    it.points, it.segments, it.distance, if (it.completeTime && it.points >= 2) it.lastTime!! - it.firstTime!! else null, it.warnings.toList())
+                    it.points, it.segments, it.distance, if (it.completeTime && it.points >= 2) it.lastTime!! - it.firstTime!! else null, it.warnings.toList(),
+                    it.elevation.ascentM, it.elevation.descentM)
             }, waypoints, buildList { if (version == "1.0") add("GPX 1.0：保留原始字段，后续导出转换为 1.1")
                 if (creator == null) add("未声明生成工具") })
         }

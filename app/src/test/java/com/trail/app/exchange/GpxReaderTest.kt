@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GpxReaderTest {
+    @Test fun elevationTotalsRespectMissingHeightAndSegments() {
+        val result = read("""<trk><trkseg><trkpt lat="1" lon="103"><ele>100</ele></trkpt><trkpt lat="1" lon="103"><ele>110</ele></trkpt><trkpt lat="1" lon="103"/><trkpt lat="1" lon="103"><ele>500</ele></trkpt></trkseg><trkseg><trkpt lat="1" lon="103"><ele>0</ele></trkpt><trkpt lat="1" lon="103"><ele>-10</ele></trkpt></trkseg></trk>""")
+        assertEquals(10.0, result.paths.single().ascentM!!, 0.001)
+        assertEquals(10.0, result.paths.single().descentM!!, 0.001)
+    }
     private fun xml(body: String, version: String = "1.1") = """<gpx xmlns="http://www.topografix.com/GPX/${version.replace('.', '/')}" xmlns:x="urn:vendor:test" version="$version" creator="tests">$body</gpx>"""
     private fun read(body: String, version: String = "1.1", events: MutableList<GpxEvent> = mutableListOf()) =
         GpxReader().read(xml(body, version).byteInputStream(), sink = { events.add(it) })
