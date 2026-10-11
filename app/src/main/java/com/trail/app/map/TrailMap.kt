@@ -10,6 +10,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -145,21 +146,24 @@ fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, z
         Canvas(Modifier.fillMaxSize()) {
             val at = markerScreen ?: return@Canvas
             // 屏幕像素叠层保持定位箭头恒定可读；投影只用于显示，不改动 WGS84 轨迹点。
-            val radius = 11.dp.toPx()
-            drawCircle(Color.White, radius + 3.dp.toPx(), at)
-            drawCircle(Color(0xFF157CB4), radius, at)
-            val bearing = current?.bearingDeg
-            if (bearing != null) rotate(bearing - cameraBearing, at) {
-                // 箭头尖端离开圆点，保持朝向明确；白边在深色卫星底图上仍可辨认。
-                val arrow = Path().apply {
-                    moveTo(at.x, at.y - 31.dp.toPx())
-                    lineTo(at.x - 9.dp.toPx(), at.y - 10.dp.toPx())
-                    lineTo(at.x + 9.dp.toPx(), at.y - 10.dp.toPx())
-                    close()
-                }
-                drawPath(arrow, Color.White, style = Stroke(width = 2.dp.toPx()))
-                drawPath(arrow, Color(0xFF157CB4))
-            } else drawCircle(Color.White, 3.dp.toPx(), at)
+            // 以定位坐标为中心整体缩放，圆点、白边和箭头同比例缩小，避免偏离真实位置。
+            scale(0.5f, 0.5f, at) {
+                val radius = 11.dp.toPx()
+                drawCircle(Color.White, radius + 3.dp.toPx(), at)
+                drawCircle(Color(0xFF157CB4), radius, at)
+                val bearing = current?.bearingDeg
+                if (bearing != null) rotate(bearing - cameraBearing, at) {
+                    // 箭头尖端离开圆点，保持朝向明确；白边在深色卫星底图上仍可辨认。
+                    val arrow = Path().apply {
+                        moveTo(at.x, at.y - 31.dp.toPx())
+                        lineTo(at.x - 9.dp.toPx(), at.y - 10.dp.toPx())
+                        lineTo(at.x + 9.dp.toPx(), at.y - 10.dp.toPx())
+                        close()
+                    }
+                    drawPath(arrow, Color.White, style = Stroke(width = 2.dp.toPx()))
+                    drawPath(arrow, Color(0xFF157CB4))
+                } else drawCircle(Color.White, 3.dp.toPx(), at)
+            }
         }
     }
 }
