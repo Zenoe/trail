@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
     private fun send(action: String, activity: ActivityType) {
         try {
             val intent = Intent(this, RecordingService::class.java).setAction(action).putExtra(RecordingService.EXTRA_ACTIVITY, activity.name)
-            if (action == RecordingService.DISCARD) vm.active.value?.pathId?.let { intent.putExtra(RecordingService.EXTRA_PATH_ID, it) }
+            if (action == RecordingService.DISCARD || action == RecordingService.END_DISCARD) vm.active.value?.pathId?.let { intent.putExtra(RecordingService.EXTRA_PATH_ID, it) }
             if (action == RecordingService.START || action == RecordingService.RESUME) startForegroundService(intent)
             else startService(intent)
         } catch (_: Exception) { vm.error.value = "系统暂时不允许启动定位服务，请回到应用后重试。" }

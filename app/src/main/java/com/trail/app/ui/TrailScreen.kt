@@ -111,7 +111,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var exportWhole by remember { mutableStateOf(false) }
     var exportWaypoints by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-    val currentLocation = liveLocation?.takeIf { it.elapsedMs <= now && now - it.elapsedMs < PreviewLocationRules.MAX_AGE_MS }
+    // GPS 回调发生在每秒计时器两次刷新之间；不能拿旧的 now 判定新样本来自“未来”，否则每次更新都会隐藏蓝点。
+    val locationNow = maxOf(now, SystemClock.elapsedRealtime())
+    val currentLocation = liveLocation?.takeIf { it.elapsedMs <= locationNow && locationNow - it.elapsedMs < PreviewLocationRules.MAX_AGE_MS }
     // 用户看到的是手机指向，罗盘优先；无罗盘设备才使用移动航向。
     val orientedLocation = currentLocation?.copy(bearingDeg = liveHeading ?: currentLocation.bearingDeg)
     LaunchedEffect(page) {
@@ -155,7 +157,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹") }
             TextButton(onClick = { command(if (RecordingRules.canPause(active!!.state)) RecordingService.PAUSE else RecordingService.RESUME, ActivityType.valueOf(activity)) },
                 modifier = Modifier.weight(1f)) { Text(if (RecordingRules.canPause(active!!.state)) "暂停" else "继续") }
-            TextButton(onClick = { finishDialog = true }, modifier = Modifier.weight(1f)) { Text("结束保存") }
+            TextButton(onClick = { finishDialog = true }, modifier = Modifier.weight(1f)) { Text("结束") }
         } else if (!fullMap) Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { showMap() }, modifier = Modifier.weight(1f)) { Text("地图", color = if (page == "map") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
             TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹", color = if (page == "list" || page == "detail") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -282,7 +284,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                             }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
                                 Text(if (RecordingRules.canPause(active!!.state)) "暂停记录" else "继续记录")
                             }
-                            OutlinedButton(onClick = { finishDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("结束并保存") }
+                            OutlinedButton(onClick = { finishDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("结束") }
                             if (state == RecordingState.PAUSED || state == RecordingState.INTERRUPTED) {
                                 TextButton(onClick = { deleteTarget = active!!.pathId to false }) { Text("丢弃暂停记录") }
                             }
@@ -397,12 +399,23 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             deleteTarget = null
         }, enabled = active?.pathId != deleteTarget?.first || active?.state in listOf(RecordingState.PAUSED, RecordingState.INTERRUPTED)) { Text("删除") } },
         dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } })
-    if (finishDialog) AlertDialog(onDismissRequest = { finishDialog = false }, title = { Text("结束并保存轨迹？") },
-        text = { Text("已提交的轨迹点会保存在本机。未获取位置也可以保存空记录。") },
-        confirmButton = { TextButton(onClick = {
-            finishDialog = false; savingPath = active?.pathId
-            command(RecordingService.FINISH, ActivityType.valueOf(activity))
-        }) { Text("保存轨迹") } }, dismissButton = { TextButton(onClick = { finishDialog = false }) { Text("取消") } })
+    if (finishDialog) ModalBottomSheet(onDismissRequest = { finishDialog = false }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            TextButton(onClick = {
+                finishDialog = false; savingPath = active?.pathId
+                command(RecordingService.FINISH, ActivityType.valueOf(activity))
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("保存") }
+            TextButton(onClick = {
+                val pathId = active?.pathId
+                finishDialog = false; savingPath = null
+                command(RecordingService.END_DISCARD, ActivityType.valueOf(activity))
+                vm.clearReferenceIfDeleted(pathId, null)
+                showMap()
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                Text("放弃", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
 }
 
 @Composable private fun Notice(text: String) { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }

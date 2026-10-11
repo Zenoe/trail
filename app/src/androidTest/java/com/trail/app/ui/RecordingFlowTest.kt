@@ -33,8 +33,10 @@ class RecordingFlowTest {
         screenshot("paused")
         compose.onNodeWithText("继续").performClick()
         waitFor("暂停")
-        compose.onNodeWithText("结束保存").performClick()
-        compose.onNodeWithText("保存轨迹").performClick()
+        compose.onNodeWithText("结束").performClick()
+        waitFor("保存")
+        compose.onNodeWithText("放弃").assertExists()
+        compose.onNodeWithText("保存").performClick()
         waitFor("轨迹详情")
         screenshot("detail")
         compose.onNodeWithText("轨迹").performClick()
@@ -50,5 +52,15 @@ class RecordingFlowTest {
             target.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()
         }
+    }
+
+    @Test fun endDiscardReturnsToIdle() {
+        waitFor("开始记录")
+        compose.onNodeWithText("开始记录").performScrollTo().performClick()
+        waitFor("结束")
+        compose.onNodeWithText("结束").performClick()
+        waitFor("放弃")
+        compose.onNodeWithText("放弃").performClick()
+        waitFor("开始记录")
     }
 }

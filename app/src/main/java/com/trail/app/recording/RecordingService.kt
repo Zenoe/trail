@@ -85,6 +85,7 @@ class RecordingService : Service() {
                 RESUME -> repo.resume(wall, elapsed)
                 FINISH -> repo.finish(wall, elapsed)
                 DISCARD -> command.pathId?.let { repo.discardPaused(it) }
+                END_DISCARD -> command.pathId?.let { repo.discardCurrent(it) }
                 FIX -> command.sample?.let { repo.sample(it, wall, elapsed) }
                 TICK -> repo.heartbeat(wall, elapsed)
                 RECOVER -> repo.recoverInterrupted(wall)
@@ -144,6 +145,7 @@ class RecordingService : Service() {
         const val RESUME = "com.trail.RESUME"
         const val FINISH = "com.trail.FINISH"
         const val DISCARD = "com.trail.DISCARD"
+        const val END_DISCARD = "com.trail.END_DISCARD"
         const val EXTRA_ACTIVITY = "activity"
         const val EXTRA_PATH_ID = "pathId"
         private const val FIX = "FIX"

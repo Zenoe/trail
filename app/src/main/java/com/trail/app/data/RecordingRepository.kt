@@ -48,9 +48,14 @@ class RecordingRepository(private val db: TrailDatabase) {
     }
 
     /** 丢弃仅限暂停/中断的当前记录；与 GPS 写入共享服务队列，防止删除后迟到点重新写入。 */
-    suspend fun discardPaused(pathId: String): Boolean = db.withTransaction {
+    suspend fun discardPaused(pathId: String): Boolean = discard(pathId, false)
+
+    /** 用户在“结束 → 放弃”中明确选择后可直接丢弃正在记录的会话，ID 校验避免迟到命令删除新会话。 */
+    suspend fun discardCurrent(pathId: String): Boolean = discard(pathId, true)
+
+    private suspend fun discard(pathId: String, allowRecording: Boolean): Boolean = db.withTransaction {
         val session = dao.active() ?: return@withTransaction false
-        if (session.pathId != pathId || session.state !in setOf(RecordingState.PAUSED, RecordingState.INTERRUPTED)) return@withTransaction false
+        if (session.pathId != pathId || (!allowRecording && session.state !in setOf(RecordingState.PAUSED, RecordingState.INTERRUPTED))) return@withTransaction false
         val path = dao.exportPath(pathId) ?: return@withTransaction false
         dao.deletePathElements(pathId)
         dao.deletePath(pathId)

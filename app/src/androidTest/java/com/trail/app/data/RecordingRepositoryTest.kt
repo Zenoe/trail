@@ -147,4 +147,19 @@ class RecordingRepositoryTest {
         assertEquals(0, repo.dao.pointCount())
         assertNull(repo.dao.exportPath(pathId))
     }
+
+    @Test fun endDiscardRemovesRecordingAndIgnoresLateSamplesAndOldCommands() = runBlocking {
+        repo.start(ActivityType.HIKE, wall, 0)
+        val oldPath = repo.dao.active()!!.pathId
+        repo.sample(fix(1_000), wall + 1_000, 1_000)
+        repo.sample(fix(4_000), wall + 4_000, 4_000)
+        assertTrue(repo.discardCurrent(oldPath))
+        repo.sample(fix(7_000), wall + 7_000, 7_000)
+        assertNull(repo.dao.active())
+        assertEquals(0, repo.dao.pointCount())
+        repo.start(ActivityType.WALK, wall + 8_000, 8_000)
+        val newPath = repo.dao.active()!!.pathId
+        assertFalse(repo.discardCurrent(oldPath))
+        assertEquals(newPath, repo.dao.active()!!.pathId)
+    }
 }
