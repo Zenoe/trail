@@ -1,10 +1,21 @@
 package com.trail.app.map
 
 import android.os.Bundle
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.trail.app.domain.LocationSample
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -21,14 +32,19 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.*
 
 @Composable
-fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, zoomIn: Boolean = true, modifier: Modifier = Modifier,
-    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), online: Boolean = false) {
+fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, zoomIn: Boolean = true,
+    centerLocationRequest: Int = 0, modifier: Modifier = Modifier,
+    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), online: Boolean = false,
+    current: LocationSample? = null) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val view = remember { MapLibre.getInstance(context); MapView(context).apply { onCreate(Bundle()) } }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var loaded by remember { mutableIntStateOf(0) }
     var appliedZoomRequest by remember { mutableIntStateOf(zoomRequest) }
+    var markerScreen by remember { mutableStateOf<Offset?>(null) }
+    var cameraBearing by remember { mutableFloatStateOf(0f) }
+    var mapWidth by remember { mutableIntStateOf(0) }
     DisposableEffect(view, lifecycle) {
         val observer = LifecycleEventObserver { _, event -> when (event) {
             Lifecycle.Event.ON_START -> view.onStart(); Lifecycle.Event.ON_RESUME -> view.onResume()
@@ -82,7 +98,8 @@ fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, z
     // 用数据身份触发初次全程视图；每个新 GPS 点不会打断用户平移缩放。
     LaunchedEffect(points.firstOrNull()?.segmentId, reference.firstOrNull()?.segmentId, waypoints.firstOrNull()?.id, fitRequest, loaded) {
         if (loaded == 0) return@LaunchedEffect
-        val coordinates = (points + reference).filter { it.accepted }.map { MapCoordinate(it.latitude, it.longitude) } + waypoints.map { MapCoordinate(it.latitude, it.longitude) }
+        val coordinates = (points + reference).filter { it.accepted }.map { MapCoordinate(it.latitude, it.longitude) } +
+            waypoints.map { MapCoordinate(it.latitude, it.longitude) }
         val extent = MapGeometry.extent(coordinates) ?: return@LaunchedEffect
         if (extent.north == extent.south && extent.east == extent.west) map?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(extent.north, extent.west), 16.0))
         else map?.moveCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.from(extent.north, extent.east, extent.south, extent.west), 50))
@@ -93,5 +110,56 @@ fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, z
             map?.animateCamera(if (zoomIn) CameraUpdateFactory.zoomIn() else CameraUpdateFactory.zoomOut())
         }
     }
-    AndroidView(factory = { view }, modifier = modifier)
+    var appliedCenterRequest by remember { mutableIntStateOf(centerLocationRequest) }
+    LaunchedEffect(centerLocationRequest, current?.elapsedMs, loaded) {
+        if (loaded > 0 && centerLocationRequest != appliedCenterRequest && current != null) {
+            appliedCenterRequest = centerLocationRequest
+            map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(current.latitude, current.longitude), 16.0))
+        }
+    }
+    var centeredOnLocation by remember { mutableStateOf(false) }
+    var appliedLocationFit by remember { mutableIntStateOf(fitRequest) }
+    LaunchedEffect(current?.elapsedMs, loaded, fitRequest) {
+        if (loaded == 0 || current == null || points.any { it.accepted } || reference.any { it.accepted } || waypoints.isNotEmpty()) return@LaunchedEffect
+        if (!centeredOnLocation || fitRequest != appliedLocationFit) {
+            map?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(current.latitude, current.longitude), 16.0))
+            centeredOnLocation = true
+            appliedLocationFit = fitRequest
+        }
+    }
+    DisposableEffect(map, current?.elapsedMs, mapWidth) {
+        val ready = map
+        fun project() {
+            cameraBearing = ready?.cameraPosition?.bearing?.toFloat() ?: 0f
+            markerScreen = if (ready == null || current == null || mapWidth == 0) null else
+                ready.projection.toScreenLocation(LatLng(current.latitude.coerceIn(-85.051129, 85.051129), current.longitude))
+                    .let { Offset(it.x, it.y) }
+        }
+        val listener = MapLibreMap.OnCameraMoveListener { project() }
+        ready?.addOnCameraMoveListener(listener)
+        project()
+        onDispose { ready?.removeOnCameraMoveListener(listener) }
+    }
+    Box(modifier.onSizeChanged { mapWidth = it.width }) {
+        AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
+        Canvas(Modifier.fillMaxSize()) {
+            val at = markerScreen ?: return@Canvas
+            // 屏幕像素叠层保持定位箭头恒定可读；投影只用于显示，不改动 WGS84 轨迹点。
+            val radius = 11.dp.toPx()
+            drawCircle(Color.White, radius + 3.dp.toPx(), at)
+            drawCircle(Color(0xFF157CB4), radius, at)
+            val bearing = current?.bearingDeg
+            if (bearing != null) rotate(bearing - cameraBearing, at) {
+                // 箭头尖端离开圆点，保持朝向明确；白边在深色卫星底图上仍可辨认。
+                val arrow = Path().apply {
+                    moveTo(at.x, at.y - 31.dp.toPx())
+                    lineTo(at.x - 9.dp.toPx(), at.y - 10.dp.toPx())
+                    lineTo(at.x + 9.dp.toPx(), at.y - 10.dp.toPx())
+                    close()
+                }
+                drawPath(arrow, Color.White, style = Stroke(width = 2.dp.toPx()))
+                drawPath(arrow, Color(0xFF157CB4))
+            } else drawCircle(Color.White, 3.dp.toPx(), at)
+        }
+    }
 }

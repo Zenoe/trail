@@ -18,6 +18,9 @@ class TrailViewModel(application: Application, saved: SavedStateHandle) : Androi
     val error = app.recordingError
     val onlineMap = app.maps.online
     val mapStatus = app.maps.status
+    val currentLocation = app.liveLocation.current
+    val currentHeading = app.liveLocation.heading
+    val currentLocationStatus = app.liveLocation.status
     fun setOnlineMap(enabled: Boolean) { app.maps.setOnline(enabled) }
     val selectedPath = saved.getMutableStateFlow<String?>("selectedPath", null)
     val selectedDocument = saved.getMutableStateFlow<String?>("selectedDocument", null)

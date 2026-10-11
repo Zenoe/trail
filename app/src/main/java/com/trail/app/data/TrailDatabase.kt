@@ -20,11 +20,25 @@ interface TrailDao {
     @Query("SELECT * FROM paths WHERE id = :id") fun observePath(id: String): Flow<PathEntity?>
     @Query("SELECT points.* FROM points JOIN segments ON points.segmentId = segments.id WHERE segments.pathId = :pathId ORDER BY segments.ordinal, points.ordinal")
     fun observePoints(pathId: String): Flow<List<PointEntity>>
-    // 只抽稀显示，不修改原始数据。每段首尾与拒收点始终保留，避免跨断点连线。
-    @Query("SELECT points.* FROM points JOIN segments ON points.segmentId = segments.id WHERE segments.pathId = :pathId AND (points.ordinal % (1 + (SELECT COUNT(*) FROM points p JOIN segments s ON p.segmentId = s.id WHERE s.pathId = :pathId) / 10000) = 0 OR points.ordinal = (SELECT MAX(p.ordinal) FROM points p WHERE p.segmentId = points.segmentId) OR points.accepted = 0) ORDER BY segments.ordinal, points.ordinal")
+    // 只抽稀地图显示，不碰原始点。连续拒收只取首点作断线哨兵，并保留恢复后的首个有效点；
+    // 否则漫长弱信号会让“抽稀”结果仍包含无上限的拒收点，或错误地跨空档连线。
+    @Query("""WITH cadence AS (SELECT 1 + COUNT(*) / 10000 AS step FROM points p
+        JOIN segments s ON p.segmentId = s.id WHERE s.pathId = :pathId)
+        SELECT points.* FROM points JOIN segments ON points.segmentId = segments.id, cadence
+        WHERE segments.pathId = :pathId AND (
+            (points.accepted = 0 AND NOT EXISTS (SELECT 1 FROM points prev
+                WHERE prev.segmentId = points.segmentId AND prev.ordinal = points.ordinal - 1 AND prev.accepted = 0))
+            OR (points.accepted = 1 AND (points.ordinal % cadence.step = 0
+                OR points.ordinal = (SELECT MIN(p.ordinal) FROM points p WHERE p.segmentId = points.segmentId)
+                OR points.ordinal = (SELECT MAX(p.ordinal) FROM points p WHERE p.segmentId = points.segmentId)
+                OR EXISTS (SELECT 1 FROM points prev WHERE prev.segmentId = points.segmentId
+                    AND prev.ordinal = points.ordinal - 1 AND prev.accepted = 0)))
+        ) ORDER BY segments.ordinal, points.ordinal""")
     fun observeMapPoints(pathId: String): Flow<List<PointEntity>>
     @Query("SELECT * FROM points WHERE segmentId = :segmentId ORDER BY ordinal DESC LIMIT 1")
     suspend fun lastPoint(segmentId: String): PointEntity?
+    @Query("SELECT * FROM points WHERE segmentId = :segmentId AND accepted = 1 ORDER BY ordinal DESC LIMIT 1")
+    suspend fun lastAcceptedPoint(segmentId: String): PointEntity?
     @Query("SELECT COUNT(*) FROM segments WHERE pathId = :pathId") suspend fun segmentCount(pathId: String): Int
     @Query("SELECT COUNT(*) FROM points") suspend fun pointCount(): Int
     @Query("SELECT * FROM recording_events WHERE sessionId = :id ORDER BY wallTimeMs") suspend fun events(id: String): List<RecordingEventEntity>

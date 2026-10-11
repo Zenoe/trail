@@ -55,18 +55,38 @@ class GpxExportRepository(private val db: TrailDatabase, private val root: File,
                     jobContext.ensureActive()
                     writer.startPath(path.kind, path.name, dao.exportElements(documentId, "PATH", path.id).map { it.xml })
                     dao.exportSegments(path.id).forEach { segment ->
-                        writer.startSegment(path.kind)
+                        val splitRejected = document.source == "RECORDED" && path.kind != "ROUTE"
+                        val extras = dao.exportElements(documentId, "SEGMENT", segment.id).map { it.xml }
+                        var open = false
+                        var emitted = false
+                        var metadataWritten = false
+                        fun openSegment() { writer.startSegment(path.kind); open = true; emitted = true }
+                        fun closeSegment() {
+                            writer.endSegment(path.kind, if (metadataWritten) emptyList() else extras)
+                            metadataWritten = true
+                            open = false
+                        }
+                        if (!splitRejected) openSegment()
                         var after = -1
                         while (true) {
                             jobContext.ensureActive()
                             val page = dao.exportPointPage(segment.id, after)
                             if (page.isEmpty()) break
-                            page.forEach { writer.waypoint(it.latitude, it.longitude, it.elevationM,
-                                it.timeUtcMs, it.timeLexical, it.name, it.symbol, it.extraXml,
-                                if (path.kind == "ROUTE") "rtept" else "trkpt") }
+                            page.forEach { point ->
+                                if (splitRejected && !point.accepted) {
+                                    // 拒收区间必须断开 trkseg；否则第三方阅读器会把两侧有效点重新连成瞬移线。
+                                    if (open) closeSegment()
+                                } else {
+                                    if (!open) openSegment()
+                                    writer.waypoint(point.latitude, point.longitude, point.elevationM,
+                                        point.timeUtcMs, point.timeLexical, point.name, point.symbol, point.extraXml,
+                                        if (path.kind == "ROUTE") "rtept" else "trkpt")
+                                }
+                            }
                             after = page.last().ordinal
                         }
-                        writer.endSegment(path.kind, dao.exportElements(documentId, "SEGMENT", segment.id).map { it.xml })
+                        if (open) closeSegment()
+                        else if (!emitted) { openSegment(); closeSegment() } // 空记录仍保留一个合法空分段。
                     }
                     writer.endPath(path.kind)
                 }

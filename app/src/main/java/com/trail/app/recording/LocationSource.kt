@@ -32,7 +32,9 @@ class AndroidLocationSource(context: Context) : LocationSource {
                     location.elapsedRealtimeNanos / 1_000_000,
                     if (location.hasAccuracy()) location.accuracy else null,
                     if (location.hasAltitude()) location.altitude else null,
-                    if (location.hasSpeed()) location.speed else null))
+                    if (location.hasSpeed()) location.speed else null,
+                    // GPS 航向只在持续移动时可信；静止时不传给箭头，避免原地乱转。
+                    if (location.hasBearing() && location.hasSpeed() && location.speed >= 1f) location.bearing else null))
             }
             override fun onProviderDisabled(provider: String) { onUnavailable("GPS 已关闭，请在系统设置中开启") }
             override fun onProviderEnabled(provider: String) { onUnavailable("等待 GPS 定位，请到室外开阔处") }

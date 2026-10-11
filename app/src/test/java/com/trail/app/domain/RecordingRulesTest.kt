@@ -28,4 +28,14 @@ class RecordingRulesTest {
         assertTrue(RecordingRules.canResume(RecordingState.INTERRUPTED))
         assertFalse(RecordingRules.canResume(RecordingState.FINISHED))
     }
+    @Test fun coldStartNeedsNearbySecondFixAndRejectsImpossibleJump() {
+        val first = LocationSample(1.3, 103.8, 0, 1_000, 5f, null, null)
+        val nearby = first.copy(latitude = 1.3001, elapsedMs = 4_000)
+        val jump = first.copy(latitude = 1.32, elapsedMs = 4_000)
+        assertTrue(RecordingRules.stablePair(first, nearby))
+        assertFalse(RecordingRules.stablePair(first, jump))
+        assertFalse(RecordingRules.stablePair(first.copy(accuracyM = 40f), nearby.copy(accuracyM = 40f)))
+        assertFalse(RecordingRules.plausible(nearby, jump, ActivityType.HIKE))
+        assertTrue(RecordingRules.plausible(nearby, nearby.copy(latitude = 1.3002, elapsedMs = 7_000), ActivityType.HIKE))
+    }
 }

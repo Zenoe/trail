@@ -30,7 +30,7 @@ class RecordingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        source = AndroidLocationSource(this)
+        source = app.gps.handle()
         getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "轨迹记录", NotificationManager.IMPORTANCE_LOW))
         scope.launch {

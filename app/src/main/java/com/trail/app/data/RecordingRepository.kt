@@ -82,7 +82,6 @@ class RecordingRepository(private val db: TrailDatabase) {
         // 拒绝缓存位置、乱序位置，以及暂停前排队但恢复后才到达的位置。
         if (fix.elapsedMs < s.acceptingSinceMs || fix.elapsedMs > elapsed ||
             elapsed - fix.elapsedMs > 15_000 || fix.elapsedMs <= (s.lastFixElapsedMs ?: -1)) return@withTransaction
-        val good = RecordingRules.precise(fix)
         var segmentId = s.segmentId
         val gap = s.lastFixElapsedMs?.let { fix.elapsedMs - it > RecordingRules.SIGNAL_TIMEOUT_MS } ?: false
         if (segmentId == null || gap) {
@@ -90,7 +89,12 @@ class RecordingRepository(private val db: TrailDatabase) {
             dao.insert(SegmentEntity(segmentId, s.pathId, dao.segmentCount(s.pathId), if (gap) "SIGNAL_GAP" else "START_OR_RESUME"))
         }
         val previous = dao.lastPoint(segmentId)
-        // 低精度原始点保留，但前后不连线、不计距离。阶段 4 再增加速度/漂移滤波。
+        val accepted = dao.lastAcceptedPoint(segmentId)
+        fun PointEntity.asSample() = LocationSample(latitude, longitude, timeUtcMs ?: wall, elapsedMs, accuracyM, elevationM, speedMps)
+        // 新分段先等第二个相近点，后续按活动速度上限剔除瞬移；拒收点仍保留原始坐标供诊断。
+        val good = if (accepted == null) previous?.let { RecordingRules.stablePair(it.asSample(), fix) } == true
+            else RecordingRules.plausible(accepted.asSample(), fix, dao.exportPath(s.pathId)?.activity ?: ActivityType.HIKE)
+        // 低精度和速度异常原始点保留，但前后不连线、不计距离；交换 GPX 跳过拒收点。
         val addition = if (good && previous?.accepted == true) RecordingRules.distance(
             previous.latitude, previous.longitude, fix.latitude, fix.longitude) else 0.0
         dao.insert(PointEntity(segmentId, (previous?.ordinal ?: -1) + 1, fix.latitude, fix.longitude,
@@ -98,7 +102,7 @@ class RecordingRepository(private val db: TrailDatabase) {
             fix.speedMps?.takeIf { it.isFinite() && it >= 0 }, fix.elapsedMs, good))
         val updated = advance(s, wall, elapsed)
         dao.update(updated.copy(state = if (good) RecordingState.RECORDING else RecordingState.WAITING,
-            segmentId = if (good) segmentId else null, distanceM = s.distanceM + addition,
+            segmentId = segmentId, distanceM = s.distanceM + addition,
             lastElapsedMs = if (good) elapsed else null,
             lastFixElapsedMs = fix.elapsedMs, accuracyM = fix.accuracyM, elevationM = fix.altitudeM))
     }

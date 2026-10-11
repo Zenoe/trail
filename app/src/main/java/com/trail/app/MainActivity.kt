@@ -27,10 +27,15 @@ class MainActivity : ComponentActivity() {
     private val pickGpx = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(importVm::open) }
     private var pending: Pair<String, ActivityType>? = null
     private val notificationsEnabled = mutableStateOf(true)
+    private val previewPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        if (hasPreviewPermission()) (application as TrailApplication).liveLocation.start()
+        else (application as TrailApplication).liveLocation.status.value = "位置权限未开启；仍可浏览已有轨迹"
+    }
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val action = pending; pending = null
         notificationsEnabled.value = getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            (application as TrailApplication).liveLocation.start()
             action?.let { send(it.first, it.second) }
         } else vm.error.value = "需要精确定位才能记录轨迹。可在系统权限中开启；已有轨迹仍可查看。"
     }
@@ -51,7 +56,20 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         notificationsEnabled.value = getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        val tracker = (application as TrailApplication).liveLocation
+        if (hasPreviewPermission()) tracker.start()
+        else if (!getPreferences(MODE_PRIVATE).getBoolean("previewPermissionAsked", false)) {
+            // 前台地图首次进入时请求一次；拒绝后不反复弹窗，记录按钮仍可显式再申请。
+            getPreferences(MODE_PRIVATE).edit().putBoolean("previewPermissionAsked", true).apply()
+            previewPermissionRequest.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        } else tracker.status.value = "位置权限未开启；仍可浏览已有轨迹"
     }
+    override fun onPause() {
+        (application as TrailApplication).liveLocation.stop()
+        super.onPause()
+    }
+    private fun hasPreviewPermission() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
     private fun command(action: String, activity: ActivityType) {
         // 暂停/保存不依赖定位权限，权限被撤销后仍应能封存已有记录。
         if (action == RecordingService.START || action == RecordingService.RESUME) {

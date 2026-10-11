@@ -88,6 +88,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     val selectedDocument by vm.selectedDocument.collectAsStateWithLifecycle()
     val onlineMap by vm.onlineMap.collectAsStateWithLifecycle()
     val mapStatus by vm.mapStatus.collectAsStateWithLifecycle()
+    val liveLocation by vm.currentLocation.collectAsStateWithLifecycle()
+    val liveHeading by vm.currentHeading.collectAsStateWithLifecycle()
+    val liveStatus by vm.currentLocationStatus.collectAsStateWithLifecycle()
     val importState by importVm.state.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     var page by rememberSaveable { mutableStateOf("map") }
@@ -95,6 +98,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var finishDialog by rememberSaveable { mutableStateOf(false) }
     var fit by remember { mutableIntStateOf(0) }
     var zoomRequest by remember { mutableIntStateOf(0) }
+    var centerLocationRequest by remember { mutableIntStateOf(0) }
     var zoomIn by remember { mutableStateOf(true) }
     var fullMap by rememberSaveable { mutableStateOf(false) }
     var savingPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -107,6 +111,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var exportWhole by remember { mutableStateOf(false) }
     var exportWaypoints by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    val currentLocation = liveLocation?.takeIf { it.elapsedMs <= now && now - it.elapsedMs < PreviewLocationRules.MAX_AGE_MS }
+    // 用户看到的是手机指向，罗盘优先；无罗盘设备才使用移动航向。
+    val orientedLocation = currentLocation?.copy(bearingDeg = liveHeading ?: currentLocation.bearingDeg)
     LaunchedEffect(page) {
         // 进程重建时只恢复页面名不够；详情 ID 不存在时回到列表，避免永久加载空详情。
         if (page == "detail" && vm.selectedPath.value == null && vm.selectedDocument.value == null) page = "list"
@@ -136,26 +143,58 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     }
     BackHandler(fullMap || page != "map") { if (fullMap) fullMap = false else showMap() }
     Scaffold(topBar = {
-        if (!fullMap) TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
+        if (!fullMap && !(page == "map" && active != null)) TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
             navigationIcon = { if (page == "detail" || page == "settings") TextButton(onClick = { showMap() }) { Text("返回") } },
             actions = {
                 if (page == "list") TextButton(onClick = pickGpx) { Text("导入 GPX") }
                 if (page == "map") TextButton(onClick = { page = "settings" }) { Text("设置") }
             })
     }, bottomBar = {
-        if (!fullMap) NavigationBar {
-            NavigationBarItem(selected = page == "map", onClick = { showMap() }, icon = { Text("⌖") }, label = { Text("地图") })
-            NavigationBarItem(selected = page == "list" || page == "detail", onClick = { vm.clearSelection(); page = "list" }, icon = { Text("≋") }, label = { Text("轨迹") })
+        if (!fullMap && page == "map" && active != null) Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+            // 录制中把常驻导航让给核心操作，地图因此可占据剩余全部高度。
+            TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹") }
+            TextButton(onClick = { command(if (RecordingRules.canPause(active!!.state)) RecordingService.PAUSE else RecordingService.RESUME, ActivityType.valueOf(activity)) },
+                modifier = Modifier.weight(1f)) { Text(if (RecordingRules.canPause(active!!.state)) "暂停" else "继续") }
+            TextButton(onClick = { finishDialog = true }, modifier = Modifier.weight(1f)) { Text("结束保存") }
+        } else if (!fullMap) Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { showMap() }, modifier = Modifier.weight(1f)) { Text("地图", color = if (page == "map") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+            TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹", color = if (page == "list" || page == "detail") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }) { padding ->
         if (!ready) { Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) { Text(error ?: "正在打开本地轨迹…") }; return@Scaffold }
+        if (page == "map" && active != null && !fullMap) {
+            val session = active!!
+            val cappedNow = minOf(now, (session.lastFixElapsedMs ?: now) + RecordingRules.SIGNAL_TIMEOUT_MS)
+            val duration = session.activeDurationMs + if (session.state == RecordingState.RECORDING) RecordingRules.durationDelta(session.lastElapsedMs, cappedNow) else 0
+            Column(Modifier.padding(padding).fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text(distanceText(session.distanceM), style = MaterialTheme.typography.headlineSmall); Text("距离 · 公里", style = MaterialTheme.typography.labelSmall) }
+                    Column(Modifier.weight(1f)) { Text(durationText(duration), style = MaterialTheme.typography.headlineSmall); Text("有效时间 · ${stateLabel(session.state)}", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                }
+                Text(mapPositionText(currentLocation), Modifier.fillMaxWidth().background(Color(0xDDF7F8F4))
+                    .padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 12.sp, maxLines = 1)
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
+                        reference = referencePoints, waypoints = referenceWaypoints, online = onlineMap, current = orientedLocation)
+                    MapControl("查看全程", "fit", Modifier.align(Alignment.TopEnd).padding(12.dp)) { fit++ }
+                    Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MapControl("放大", "plus") { zoomIn = true; zoomRequest++ }
+                        MapControl("缩小", "minus") { zoomIn = false; zoomRequest++ }
+                    }
+                    if (currentLocation != null) MapControl("回到当前位置", "locate",
+                        Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 16.dp)) { centerLocationRequest++ }
+                    if (onlineMap) Text("© OpenStreetMap contributors", Modifier.align(Alignment.BottomCenter).padding(6.dp), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            return@Scaffold
+        }
         if (fullMap && (page == "map" || page == "detail")) {
             Box(Modifier.padding(padding).fillMaxSize()) {
-                TrailMap(points, fit, zoomRequest, zoomIn, Modifier.fillMaxSize(),
+                TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
                     reference = if (page == "map") referencePoints else emptyList(),
-                    waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap)
-                val latest = points.lastOrNull { it.accepted }
-                Text(mapPositionText(latest), Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                    waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap,
+                    current = orientedLocation)
+                Text(mapPositionText(currentLocation), Modifier.align(Alignment.TopCenter).fillMaxWidth()
                     .background(Color(0xDDF7F8F4)).padding(horizontal = 12.dp, vertical = 5.dp),
                     fontSize = 12.sp, color = Color(0xFF25392F), maxLines = 1)
                 MapControl("退出全屏", "close", Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 42.dp)) { fullMap = false }
@@ -164,6 +203,8 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     MapControl("放大", "plus") { zoomIn = true; zoomRequest++ }
                     MapControl("缩小", "minus") { zoomIn = false; zoomRequest++ }
                 }
+                if (currentLocation != null) MapControl("回到当前位置", "locate",
+                    Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 40.dp)) { centerLocationRequest++ }
                 if (onlineMap) Text("© OpenStreetMap contributors", modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
                     style = MaterialTheme.typography.labelSmall)
             }
@@ -177,16 +218,23 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 }
                 if (!notificationsEnabled && active != null && page == "map") Notice("通知未开启，后台记录提示可能不可见；可在权限设置中开启。")
                 key(if (page == "detail") selectedPath ?: selectedDocument else "live") {
-                    TrailMap(points, fit, zoomRequest, zoomIn, Modifier.fillMaxWidth().height(220.dp),
+                    Box(Modifier.fillMaxWidth().height(240.dp)) {
+                    TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
                         reference = if (page == "map") referencePoints else emptyList(),
-                        waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap)
+                        waypoints = if (page == "map") referenceWaypoints else detailWaypoints, online = onlineMap,
+                        current = orientedLocation)
+                    if (currentLocation != null) MapControl("回到当前位置", "locate",
+                        Modifier.align(Alignment.BottomStart).padding(8.dp)) { centerLocationRequest++ }
+                    }
                 }
+                if (page == "map" && currentLocation == null) Text(liveStatus ?: "正在定位当前位置…",
+                    Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (onlineMap) "$mapStatus · © OpenStreetMap contributors" else "离线轨迹视图 · 无底图", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = { fullMap = true }) { Text("全屏") }
                     TextButton(onClick = { fit++ }) { Text("查看全程") }
                 }
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     val session = if (page == "detail") detailSession else active
                     val state = session?.state
                     val imported = page == "detail" && detailDocument?.source == "IMPORTED"
@@ -208,10 +256,10 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                                     onClick = { activity = type.name }, label = { Text(type.label) }) }
                             }
                         }
-                        if (state == RecordingState.INTERRUPTED && session != null) Notice("上次记录已中断，最后保存：${timeText(session.lastCommittedAt)}。继续将建立新分段。")
+                        if (state == RecordingState.INTERRUPTED) Notice("上次记录已中断，最后保存：${timeText(session!!.lastCommittedAt)}。继续将建立新分段。")
                     }
                     val distance = if (imported) detailStats?.distanceM else session?.distanceM ?: 0.0
-                    Text("${distance?.let(::distanceText) ?: "—"} 公里", fontSize = 36.sp)
+                    Text("${distance?.let(::distanceText) ?: "—"} 公里", fontSize = 28.sp)
                     val displayedDuration = (session?.activeDurationMs ?: 0) +
                         if (page == "map" && state == RecordingState.RECORDING) {
                             val cappedNow = minOf(now, (session?.lastFixElapsedMs ?: now) + RecordingRules.SIGNAL_TIMEOUT_MS)
@@ -258,7 +306,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     }
                 }
             }
-            "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
                     OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("搜索轨迹或标记") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -279,7 +327,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 }, key = { it.path.id }) { track ->
                     SwipeDeleteRow(onDelete = { deleteFromList(track.path.id, false) }) {
                         Card(onClick = { vm.selectPath(track.path.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(track.path.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                                 Text("${distanceText(track.distanceM)} 公里 · ${(track.activeDurationMs ?: track.elapsedMs)?.let(::durationText) ?: "—"} · " +
                                     if (track.source == "IMPORTED") "导入 GPX" else if (track.state == RecordingState.FINISHED) "已保存" else "${track.state?.let(::stateLabel) ?: "未结束"}",
@@ -291,7 +339,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 items(waypointDocuments.filter { it.document.name.contains(query.trim(), ignoreCase = true) && listFilter in listOf("ALL", "IMPORTED") }, key = { it.document.id }) { item ->
                     SwipeDeleteRow(onDelete = { deleteFromList(item.document.id, true) }) {
                         Card(onClick = { vm.selectDocument(item.document.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(item.document.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                                 Text("${item.waypointCount} 个标记 · 导入 GPX", style = MaterialTheme.typography.bodySmall)
                             }
@@ -299,7 +347,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     }
                 }
             }
-            "settings" -> Column(Modifier.padding(padding).padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            "settings" -> Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("记录精度：均衡（约 3 秒更新）")
                 Text("单位：公里 / 米")
                 Text("存储：本机私有数据库。卸载应用或清除数据会删除轨迹；请定期导出 GPX 备份。")
@@ -308,7 +356,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.3.0 · 阶段 3", style = MaterialTheme.typography.labelLarge)
+                Text("山径 0.4.1 · 室内位置预览", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -359,8 +407,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
 
 @Composable private fun Notice(text: String) { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
 @Composable private fun Metric(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelMedium); Text(value, style = MaterialTheme.typography.headlineSmall) } }
-private fun mapPositionText(point: PointEntity?): String = if (point == null) "纬度 —   经度 —   海拔 —" else
-    "纬度 ${String.format(Locale.US, "%.5f", point.latitude)}°   经度 ${String.format(Locale.US, "%.5f", point.longitude)}°   海拔 ${point.elevationM?.let { String.format(Locale.US, "%.0f m", it) } ?: "—"}"
+private fun mapPositionText(point: LocationSample?): String = if (point == null) "纬度 —   经度 —   海拔 —" else
+    (if (SystemClock.elapsedRealtime() - point.elapsedMs > 30_000) "最近位置 · " else if ((point.accuracyM ?: 0f) > 50f) "大致位置 · " else "") +
+    "纬度 ${String.format(Locale.US, "%.5f", point.latitude)}°   经度 ${String.format(Locale.US, "%.5f", point.longitude)}°   海拔 ${point.altitudeM?.let { String.format(Locale.US, "%.0f m", it) } ?: "—"}"
 
 @Composable private fun MapControl(label: String, kind: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(Color(0x990F1C19))
@@ -384,6 +433,10 @@ private fun mapPositionText(point: PointEntity?): String = if (point == null) "�
                 "close" -> {
                     drawLine(Color.White, Offset(2f, 2f), Offset(size.width - 2f, size.height - 2f), stroke)
                     drawLine(Color.White, Offset(size.width - 2f, 2f), Offset(2f, size.height - 2f), stroke)
+                }
+                "locate" -> {
+                    drawCircle(Color.White, 8.dp.toPx(), Offset(mid, mid), style = Stroke(width = 2.dp.toPx()))
+                    drawCircle(Color.White, 2.dp.toPx(), Offset(mid, mid))
                 }
             }
         }

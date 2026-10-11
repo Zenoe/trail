@@ -3,6 +3,8 @@ package com.trail.app.exchange
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.trail.app.data.*
+import com.trail.app.domain.ActivityType
+import com.trail.app.domain.LocationSample
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import org.junit.After
@@ -55,6 +57,27 @@ class GpxExportRepositoryTest {
         val again = imports.publish(imports.prepare("再导入.gpx", { prepared.file.inputStream() }), setOf(0, 1), true)
         assertEquals(3, db.dao().exportPaths(again.documentId).sumOf { db.dao().exportSegments(it.id).size })
         assertEquals(1, db.dao().waypointCount(again.documentId))
+    }
+
+    @Test fun recordedGpxOmitsRejectedGpsJumpsButKeepsRawDatabasePoints() = runBlocking {
+        val recording = RecordingRepository(db)
+        val wall = 1_700_000_000_000L
+        recording.start(ActivityType.HIKE, wall, 0)
+        val pathId = db.dao().active()!!.pathId
+        fun fix(lat: Double, elapsed: Long) = LocationSample(lat, 103.0, wall + elapsed, elapsed, 5f, null, null)
+        recording.sample(fix(1.0, 1_000), wall + 1_000, 1_000)
+        recording.sample(fix(1.0001, 4_000), wall + 4_000, 4_000)
+        recording.sample(fix(1.02, 7_000), wall + 7_000, 7_000)
+        recording.sample(fix(1.0002, 10_000), wall + 10_000, 10_000)
+        recording.finish(wall + 11_000, 11_000)
+        val path = db.dao().exportPath(pathId)!!
+        assertEquals(4, db.dao().observePoints(pathId).first().size)
+        val file = exports.prepare(path.documentId).file
+        val positions = mutableListOf<GpxEvent.Position>()
+        val preview = GpxReader().read(file.inputStream(), sink = { if (it is GpxEvent.Position) positions += it })
+        assertEquals(2, positions.size)
+        assertEquals(listOf(1.0001, 1.0002), positions.map { it.value.lat })
+        assertEquals(2, preview.paths.single().segments)
     }
 
     @Test fun subsetExportAndDeleteKeepOtherPathsAndWaypointDocument() = runBlocking {
