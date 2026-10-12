@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -7,6 +8,7 @@
     <application android:name=".TrailApplication" android:label="山径" android:icon="@drawable/ic_trail"
         android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:supportsRtl="true" android:theme="@style/Theme.Trail">
+        <meta-data android:name="com.amap.api.v2.apikey" android:value="${amapKey}" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -35,8 +35,19 @@ import org.maplibre.geojson.*
 @Composable
 fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, zoomIn: Boolean = true,
     centerLocationRequest: Int = 0, modifier: Modifier = Modifier,
-    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), online: Boolean = false,
+    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), provider: MapProvider = MapProvider.EMPTY,
     current: LocationSample? = null) {
+    if (provider == MapProvider.AMAP) AmapTrailMap(points, fitRequest, zoomRequest, zoomIn,
+        centerLocationRequest, modifier, reference, waypoints, current)
+    else MapLibreTrailMap(points, fitRequest, zoomRequest, zoomIn, centerLocationRequest, modifier,
+        reference, waypoints, provider == MapProvider.OSM, current)
+}
+
+@Composable
+private fun MapLibreTrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int, zoomIn: Boolean,
+    centerLocationRequest: Int, modifier: Modifier,
+    reference: List<PointEntity>, waypoints: List<WaypointEntity>, online: Boolean,
+    current: LocationSample?) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val view = remember { MapLibre.getInstance(context); MapView(context).apply { onCreate(Bundle()) } }

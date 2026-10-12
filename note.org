@@ -1,0 +1,22 @@
+* build
+$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+.\gradlew.bat :app:assembleRelease --offline
+
+.\gradlew.bat assembleRelease
+它会编译所有模块的 Release 包。当前只有一个 app 模块，所以效果等同于 .\gradlew.bat :app:assembleRelease。如果 Gradle 没找到 JDK 17，再设置 JAVA_HOME；如果想离线构建，追加 --offline。
+
+* sign
+1. 打开项目 C:\Users\2004l\source\android\trail
+2. 点击 Build → Generate Signed Bundle / APK
+3. 选 APK
+4. 点 Create new… 创建密钥库
+5. 选择保存位置，例如 C:\Users\2004l\keystore\trail-release.jks
+6. 填写密钥库密码、Key alias（如 trail）、Key password，并设置有效期
+7. 选择 release，完成生成
+已签名 APK 会在：
+app\build\outputs\apk\release\
+密钥库 .jks 和两组密码必须长期保存；以后发布更新必须用同一套签名。不要把 .jks 或密码提交到 Git。
+
+* amap sha1
+~/source/android/trail (master)
+$ keytool -v -list -keystore trail-release.jks

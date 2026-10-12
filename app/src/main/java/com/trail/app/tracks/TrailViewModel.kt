@@ -6,6 +6,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.trail.app.TrailApplication
 import com.trail.app.data.*
+import com.trail.app.map.MapProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -16,12 +17,16 @@ class TrailViewModel(application: Application, saved: SavedStateHandle) : Androi
     private val dao = app.repository.dao
     val ready = MutableStateFlow(false)
     val error = app.recordingError
-    val onlineMap = app.maps.online
+    val mapProvider = app.maps.provider
+    val amapConsent = app.maps.amapConsent
+    val amapKeyConfigured = app.maps.amapKeyConfigured
+    val amapDeviceSupported = app.maps.amapDeviceSupported
     val mapStatus = app.maps.status
     val currentLocation = app.liveLocation.current
     val currentHeading = app.liveLocation.heading
     val currentLocationStatus = app.liveLocation.status
-    fun setOnlineMap(enabled: Boolean) { app.maps.setOnline(enabled) }
+    fun setMapProvider(value: MapProvider) { app.maps.setProvider(value) }
+    fun approveAmap() { app.maps.approveAmap() }
     val selectedPath = saved.getMutableStateFlow<String?>("selectedPath", null)
     val selectedDocument = saved.getMutableStateFlow<String?>("selectedDocument", null)
     val referencePath = saved.getMutableStateFlow<String?>("referencePath", null)
