@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +34,11 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -56,9 +63,11 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
-    openPermissions: () -> Unit, openLocationSettings: () -> Unit, notificationsEnabled: Boolean,
+    openPermissions: () -> Unit, openLocationSettings: () -> Unit, requestPreviewPermission: () -> Unit,
+    privacyNoticeVisible: Boolean, privacyNoticeChoice: (Boolean) -> Unit, notificationsEnabled: Boolean,
     importVm: ImportViewModel, pickGpx: () -> Unit, actions: TrackActionsViewModel) {
     val context = LocalContext.current
+    val largeFont = LocalDensity.current.fontScale >= 1.5f
     val actionState by actions.state.collectAsStateWithLifecycle()
     val createGpx = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/gpx+xml")) { uri -> actions.save(uri) }
     LaunchedEffect(actionState.ready?.absolutePath) {
@@ -158,15 +167,26 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
         } else if (document) actions.deleteDocument(id) { vm.clearReferenceIfDeleted(null, id) }
         else actions.deletePath(id) { vm.clearReferenceIfDeleted(id, null) }
     }
-    BackHandler(fullMap || page != "map") { if (fullMap) fullMap = false else showMap() }
+    BackHandler(fullMap || page != "map") {
+        if (fullMap) fullMap = false else if (page == "privacy") page = "settings" else showMap()
+    }
     Scaffold(bottomBar = {
         if (!fullMap) Column {
         // 空闲态的主操作贴着底栏；内容再多也由统计区滚动，不把地图压回固定的 240dp。
-        if (page == "map" && active == null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { command(RecordingService.START, ActivityType.valueOf(activity)) },
-                modifier = Modifier.weight(1f).height(52.dp)) { Text("开始记录") }
-            OutlinedButton(onClick = pickGpx, modifier = Modifier.weight(1f).height(52.dp)) { Text("导入 GPX") }
+        if (page == "map" && active == null) {
+            val start: @Composable (Modifier) -> Unit = { itemModifier ->
+                Button(onClick = { command(RecordingService.START, ActivityType.valueOf(activity)) },
+                    modifier = itemModifier.heightIn(min = 52.dp)) { Text("开始记录") }
+            }
+            val import: @Composable (Modifier) -> Unit = { itemModifier ->
+                OutlinedButton(onClick = pickGpx, modifier = itemModifier.heightIn(min = 52.dp)) { Text("导入 GPX") }
+            }
+            if (largeFont) Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                start(Modifier.fillMaxWidth()); import(Modifier.fillMaxWidth())
+            } else Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                start(Modifier.weight(1f)); import(Modifier.weight(1f))
+            }
         }
         if (page == "map" && active != null) Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             // 录制中把常驻导航让给核心操作，地图因此可占据剩余全部高度。
@@ -175,7 +195,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 modifier = Modifier.weight(1f)) { Text(if (RecordingRules.canPause(active!!.state)) "暂停" else "继续") }
             TextButton(onClick = { finishDialog = true }, modifier = Modifier.weight(1f)) { Text("结束") }
             TextButton(onClick = { page = "settings" }, modifier = Modifier.weight(1f)) { Text("设置") }
-        } else Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+        } else Row(Modifier.fillMaxWidth().heightIn(min = 52.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { showMap() }, modifier = Modifier.weight(1f)) { Text("地图", color = if (page == "map") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
             TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹", color = if (page == "list" || page == "detail") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
             TextButton(onClick = { page = "settings" }, modifier = Modifier.weight(1f)) { Text("设置", color = if (page == "settings") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -189,12 +209,12 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             val duration = session.activeDurationMs + if (session.state == RecordingState.RECORDING) RecordingRules.durationDelta(session.lastElapsedMs, cappedNow) else 0
             Column(Modifier.padding(padding).fillMaxSize()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(compactLength(session.distanceM), fontSize = 22.sp, maxLines = 1); Text("距离", style = MaterialTheme.typography.labelSmall) }
+                    Column(Modifier.weight(1f)) { Text(compactLength(session.distanceM), fontSize = if (largeFont) 17.sp else 22.sp); Text("距离", style = MaterialTheme.typography.labelSmall) }
                     Column(Modifier.weight(0.9f).semantics { contentDescription = "累计上升 ${compactLength(session.ascentM)}，累计下降 ${compactLength(session.descentM)}" }) {
-                        Text("↑ ${compactLength(session.ascentM)}", fontSize = 15.sp, maxLines = 1)
-                        Text("↓ ${compactLength(session.descentM)}", fontSize = 15.sp, maxLines = 1)
+                        Text("↑ ${compactLength(session.ascentM)}", fontSize = 15.sp)
+                        Text("↓ ${compactLength(session.descentM)}", fontSize = 15.sp)
                     }
-                    Column(Modifier.weight(1.3f)) { Text(durationText(duration), fontSize = 22.sp, maxLines = 1); Text("有效时间 · ${stateLabel(session.state)}", style = MaterialTheme.typography.labelSmall, maxLines = 1) }
+                    Column(Modifier.weight(1.3f)) { Text(durationText(duration), fontSize = if (largeFont) 17.sp else 22.sp); Text("有效时间 · ${stateLabel(session.state)}", style = MaterialTheme.typography.labelSmall) }
                 }
                 Text(mapPositionText(currentLocation), Modifier.fillMaxWidth().background(Color(0xDDF7F8F4))
                     .padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 12.sp, maxLines = 1)
@@ -288,7 +308,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                         }
                         Text(stateLabel(session), color = MaterialTheme.colorScheme.primary)
                         if (active == null) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 ActivityType.entries.forEach { type -> FilterChip(selected = activity == type.name,
                                     onClick = { activity = type.name }, label = { Text(type.label) }) }
                             }
@@ -318,12 +338,17 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     else Text("累计爬升：—（尚未计算）", style = MaterialTheme.typography.bodySmall)
                     if (page == "detail") {
                         Button(onClick = { vm.loadReference(); showMap(); fit++ }, modifier = Modifier.fillMaxWidth()) { Text("加载到地图") }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "save" }, enabled = !actionState.busy) { Text("导出 GPX") }
-                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "share" }, enabled = !actionState.busy) { Text("分享") }
-                            OutlinedButton(onClick = { selectedPath?.let { deleteTarget = it to false } ?: selectedDocument?.let { deleteTarget = it to true } }) {
+                        @Composable fun DetailActions(modifier: Modifier = Modifier) {
+                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "save" }, enabled = !actionState.busy, modifier = modifier) { Text("导出 GPX") }
+                            OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "share" }, enabled = !actionState.busy, modifier = modifier) { Text("分享") }
+                            OutlinedButton(onClick = { selectedPath?.let { deleteTarget = it to false } ?: selectedDocument?.let { deleteTarget = it to true } }, modifier = modifier) {
                                 Text("删除", color = MaterialTheme.colorScheme.error)
                             }
+                        }
+                        if (largeFont) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            DetailActions(Modifier.fillMaxWidth())
+                        } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            DetailActions()
                         }
                         if (imported && detailDocument?.originalFilePath != null) TextButton(onClick = { detailDocument?.id?.let(actions::prepareOriginal) }) { Text("分享导入原文件") }
                         Text("绿点：起点 · 红点：终点 · 橙点：标记。", style = MaterialTheme.typography.bodySmall)
@@ -336,10 +361,10 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             }
             "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    @Composable fun SearchBox(modifier: Modifier) {
                         BasicTextField(value = query, onValueChange = { query = it }, singleLine = true,
                             textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                            modifier = Modifier.weight(1f).height(44.dp), decorationBox = { inner ->
+                            modifier = modifier.heightIn(min = if (largeFont) 52.dp else 44.dp).semantics { contentDescription = "搜索轨迹或标记" }, decorationBox = { inner ->
                                 Box(Modifier.fillMaxSize().border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
                                     .padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                                     if (query.isEmpty()) Text("搜索轨迹或标记", style = MaterialTheme.typography.bodyMedium,
@@ -347,9 +372,15 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                                     inner()
                                 }
                             })
+                    }
+                    if (largeFont) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SearchBox(Modifier.fillMaxWidth())
+                        OutlinedButton(onClick = pickGpx, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("导入 GPX") }
+                    } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SearchBox(Modifier.weight(1f))
                         OutlinedButton(onClick = pickGpx, modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 10.dp)) { Text("导入 GPX") }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("ALL" to "全部", "RECORDED" to "记录", "IMPORTED" to "导入", "ROUTE" to "路线").forEach { (key, label) ->
                             FilterChip(selected = listFilter == key, onClick = { listFilter = key }, label = { Text(label) })
                         }
@@ -368,10 +399,10 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     SwipeDeleteRow(onDelete = { deleteFromList(track.path.id, false) }) {
                         Card(onClick = { vm.selectPath(track.path.id); page = "detail" }, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(track.path.name, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                Text(track.path.name, style = MaterialTheme.typography.titleMedium, maxLines = if (largeFont) 2 else 1)
                                 Text("${distanceText(track.distanceM)} 公里 · ${(track.activeDurationMs ?: track.elapsedMs)?.let(::durationText) ?: "—"} · " +
                                     if (track.source == "IMPORTED") "导入 GPX" else if (track.state == RecordingState.FINISHED) "已保存" else "${track.state?.let(::stateLabel) ?: "未结束"}",
-                                    style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                                    style = MaterialTheme.typography.bodySmall, maxLines = if (largeFont) 2 else 1)
                             }
                         }
                     }
@@ -387,6 +418,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     }
                 }
             }
+            "privacy" -> Box(Modifier.padding(padding)) {
+                PrivacyScreen(amapConsent, requestPreviewPermission, openPermissions, vm::revokeAmap)
+            }
             "settings" -> Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("设置", style = MaterialTheme.typography.titleLarge)
                 Text("记录精度：均衡（约 3 秒更新）")
@@ -397,10 +431,12 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.4.5 · 地图优先布局", style = MaterialTheme.typography.labelLarge)
+                OutlinedButton(onClick = { page = "privacy" }) { Text("隐私与数据") }
+                Text("山径 0.5.0 · 内测版", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
+    if (privacyNoticeVisible) PrivacyNoticeDialog(privacyNoticeChoice)
     ImportDialog(importState, importVm::select, importVm::waypoints, importVm::save, importVm::cancel, importVm::openDuplicate)
     if (mapChoiceDialog) AlertDialog(onDismissRequest = { mapChoiceDialog = false }, title = { Text("选择地图") },
         text = { Column { MapProvider.entries.forEach { choice ->
@@ -468,7 +504,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     }
 }
 
-@Composable private fun Notice(text: String) { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(8.dp)) { Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
+@Composable private fun Notice(text: String) { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(8.dp).semantics { liveRegion = LiveRegionMode.Polite }) { Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) } }
 @Composable private fun Metric(label: String, value: String) { Column { Text(label, style = MaterialTheme.typography.labelMedium); Text(value, style = MaterialTheme.typography.headlineSmall) } }
 private fun mapPositionText(point: LocationSample?): String = if (point == null) "纬度 —   经度 —   海拔 —" else
     (if (SystemClock.elapsedRealtime() - point.elapsedMs > 30_000) "最近位置 · " else if ((point.accuracyM ?: 0f) > 50f) "大致位置 · " else "") +
@@ -476,6 +512,7 @@ private fun mapPositionText(point: LocationSample?): String = if (point == null)
 
 @Composable private fun MapControl(label: String, kind: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(modifier.size(52.dp).clip(RoundedCornerShape(11.dp)).background(Color(0x990F1C19))
+        .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
         .semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(14.dp)) {
             val stroke = 2.8.dp.toPx()
@@ -513,8 +550,7 @@ private fun mapPositionText(point: LocationSample?): String = if (point == null)
                 }
             }
         }
-        // 绘制与命中区域分离：透明叠层保留 52dp 触控面积，不让小图标变得难点。
-        TextButton(onClick = onClick, modifier = Modifier.fillMaxSize()) { }
+        // 由外层同时承载绘制、52dp 命中区域和 TalkBack 按钮语义。
     }
 }
 
@@ -531,6 +567,7 @@ private fun mapPositionText(point: LocationSample?): String = if (point == null)
             modifier = Modifier.align(Alignment.CenterEnd).width(buttonWidth).height(64.dp)
                 .semantics { contentDescription = "删除轨迹" }) { Text("删除", color = Color.White) }
         Box(Modifier.fillMaxWidth().offset { IntOffset(-offsetPx.roundToInt(), 0) }
+            .semantics { customActions = listOf(CustomAccessibilityAction("删除轨迹") { onDelete(); true }) }
             .pointerInput(maxPx) {
                 detectHorizontalDragGestures(
                     onHorizontalDrag = { change, drag ->

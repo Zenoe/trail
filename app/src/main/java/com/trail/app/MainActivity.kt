@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
     private val pickGpx = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(importVm::open) }
     private var pending: Pair<String, ActivityType>? = null
     private val notificationsEnabled = mutableStateOf(true)
+    private val privacyNoticeVisible = mutableStateOf(false)
     private val previewPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         if (hasPreviewPermission()) (application as TrailApplication).liveLocation.start()
         else (application as TrailApplication).liveLocation.status.value = "位置权限未开启；仍可浏览已有轨迹"
@@ -41,11 +42,14 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 首次自动请求预览定位前先解释用途；拒绝说明不会阻断本地轨迹浏览。
+        privacyNoticeVisible.value = !getPreferences(MODE_PRIVATE).getBoolean("privacyNoticeSeen", false) && !hasPreviewPermission()
         if (savedInstanceState == null) receiveFile(intent)
         setContent {
             TrailTheme { TrailScreen(vm, ::command,
                 { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) },
-                { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }, notificationsEnabled.value,
+                { startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }, ::requestPreviewPermission,
+                privacyNoticeVisible.value, ::privacyNoticeChoice, notificationsEnabled.value,
                 importVm, { pickGpx.launch(arrayOf("*/*")) }, actions) }
         }
     }
@@ -58,11 +62,9 @@ class MainActivity : ComponentActivity() {
         notificationsEnabled.value = getSystemService(NotificationManager::class.java).areNotificationsEnabled()
         val tracker = (application as TrailApplication).liveLocation
         if (hasPreviewPermission()) tracker.start()
-        else if (!getPreferences(MODE_PRIVATE).getBoolean("previewPermissionAsked", false)) {
-            // 前台地图首次进入时请求一次；拒绝后不反复弹窗，记录按钮仍可显式再申请。
-            getPreferences(MODE_PRIVATE).edit().putBoolean("previewPermissionAsked", true).apply()
-            previewPermissionRequest.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-        } else tracker.status.value = "位置权限未开启；仍可浏览已有轨迹"
+        else if (privacyNoticeVisible.value) tracker.status.value = "查看定位用途后可启用当前位置"
+        else if (!getPreferences(MODE_PRIVATE).getBoolean("previewPermissionAsked", false)) requestPreviewPermission()
+        else tracker.status.value = "位置权限未开启；仍可浏览已有轨迹"
     }
     override fun onPause() {
         (application as TrailApplication).liveLocation.stop()
@@ -70,6 +72,18 @@ class MainActivity : ComponentActivity() {
     }
     private fun hasPreviewPermission() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
         checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun requestPreviewPermission() {
+        if (hasPreviewPermission()) { (application as TrailApplication).liveLocation.start(); return }
+        getPreferences(MODE_PRIVATE).edit().putBoolean("previewPermissionAsked", true).apply()
+        previewPermissionRequest.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+    }
+    private fun privacyNoticeChoice(enableLocation: Boolean) {
+        getPreferences(MODE_PRIVATE).edit().putBoolean("privacyNoticeSeen", true)
+            .putBoolean("previewPermissionAsked", !enableLocation).apply()
+        privacyNoticeVisible.value = false
+        if (enableLocation) requestPreviewPermission()
+        else (application as TrailApplication).liveLocation.status.value = "位置权限未开启；仍可浏览已有轨迹"
+    }
     private fun command(action: String, activity: ActivityType) {
         // 暂停/保存不依赖定位权限，权限被撤销后仍应能封存已有记录。
         if (action == RecordingService.START || action == RecordingService.RESUME) {

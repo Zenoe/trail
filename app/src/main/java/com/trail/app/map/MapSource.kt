@@ -2,6 +2,7 @@ package com.trail.app.map
 
 import android.content.Context
 import android.os.Build
+import com.amap.api.maps.MapsInitializer
 import com.trail.app.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.Cache
@@ -14,6 +15,7 @@ enum class MapProvider(val label: String) { EMPTY("空白"), OSM("OpenStreetMap"
 
 /** 地图选择只改变渲染源；轨迹仍以 WGS84 存储。 */
 class MapSource(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("maps", Context.MODE_PRIVATE)
     val amapConsent = MutableStateFlow(prefs.getBoolean("amapConsent", false))
     val amapKeyConfigured = BuildConfig.AMAP_KEY.isNotBlank()
@@ -38,6 +40,13 @@ class MapSource(context: Context) {
     }
     fun setProvider(value: MapProvider) { prefs.edit().putString("provider", value.name).apply(); provider.value = value }
     fun approveAmap() { prefs.edit().putBoolean("amapConsent", true).apply(); amapConsent.value = true }
+    fun revokeAmap() {
+        // 先切走 SDK 地图再撤销授权，避免重组期间保留高德视图。
+        if (provider.value == MapProvider.AMAP) setProvider(MapProvider.EMPTY)
+        if (amapConsent.value && amapDeviceSupported) MapsInitializer.updatePrivacyAgree(appContext, false)
+        prefs.edit().putBoolean("amapConsent", false).apply()
+        amapConsent.value = false
+    }
     companion object {
         const val LOCAL_STYLE = """{"version":8,"name":"Trail local","sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#E4EADB"}}]}"""
         const val OSM_STYLE = """{"version":8,"name":"OpenStreetMap","sources":{"osm":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19,"attribution":"© OpenStreetMap contributors"}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#E4EADB"}},{"id":"osm","type":"raster","source":"osm"}]}"""

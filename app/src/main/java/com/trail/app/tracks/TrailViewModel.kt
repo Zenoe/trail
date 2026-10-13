@@ -27,6 +27,7 @@ class TrailViewModel(application: Application, saved: SavedStateHandle) : Androi
     val currentLocationStatus = app.liveLocation.status
     fun setMapProvider(value: MapProvider) { app.maps.setProvider(value) }
     fun approveAmap() { app.maps.approveAmap() }
+    fun revokeAmap() { app.maps.revokeAmap() }
     val selectedPath = saved.getMutableStateFlow<String?>("selectedPath", null)
     val selectedDocument = saved.getMutableStateFlow<String?>("selectedDocument", null)
     val referencePath = saved.getMutableStateFlow<String?>("referencePath", null)

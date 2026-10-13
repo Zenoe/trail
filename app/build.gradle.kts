@@ -7,11 +7,14 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
-val localAmapKey = Properties().apply {
+val localProperties = Properties().apply {
     val localFile = rootProject.file("local.properties")
     if (localFile.isFile) localFile.inputStream().use(::load)
-}.getProperty("amap.key", "")
+}
+val localAmapKey = localProperties.getProperty("amap.key", "")
 val amapKey = providers.gradleProperty("AMAP_KEY").orNull ?: localAmapKey
+val internalSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+    .all { !localProperties.getProperty(it).isNullOrBlank() }
 
 android {
     namespace = "com.trail.app"
@@ -20,8 +23,8 @@ android {
         applicationId = "com.trail.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.4.5-beta"
+        versionCode = 12
+        versionName = "0.5.0-beta"
         manifestPlaceholders["amapKey"] = amapKey
         buildConfigField("String", "AMAP_KEY", "\"${amapKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -32,6 +35,20 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    // 内测签名只从未跟踪的 local.properties 读取口令；没有本地配置时仍可构建未签名 release。
+    if (internalSigningReady) signingConfigs {
+        create("internal") {
+            storeFile = rootProject.file(localProperties.getProperty("storeFile"))
+            storePassword = localProperties.getProperty("storePassword")
+            keyAlias = localProperties.getProperty("keyAlias")
+            keyPassword = localProperties.getProperty("keyPassword")
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            if (internalSigningReady) signingConfig = signingConfigs.getByName("internal")
+        }
+    }
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
 }
 kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
