@@ -3,7 +3,6 @@ package com.trail.app.ui
 import android.os.SystemClock
 import android.content.ClipData
 import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,7 +38,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trail.app.data.*
 import com.trail.app.domain.*
 import com.trail.app.map.TrailMap
-import com.trail.app.map.MapProvider
 import com.trail.app.recording.RecordingService
 import com.trail.app.tracks.TrailViewModel
 import com.trail.app.tracks.TrackActionsViewModel
@@ -88,10 +86,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     val referenceWaypoints by vm.referenceWaypoints.collectAsStateWithLifecycle()
     val referenceName by vm.referenceName.collectAsStateWithLifecycle()
     val selectedDocument by vm.selectedDocument.collectAsStateWithLifecycle()
-    val mapProvider by vm.mapProvider.collectAsStateWithLifecycle()
-    val amapConsent by vm.amapConsent.collectAsStateWithLifecycle()
-    val onlineMap = mapProvider == MapProvider.OSM
-    val mapStatus by vm.mapStatus.collectAsStateWithLifecycle()
     val liveLocation by vm.currentLocation.collectAsStateWithLifecycle()
     val liveHeading by vm.currentHeading.collectAsStateWithLifecycle()
     val liveStatus by vm.currentLocationStatus.collectAsStateWithLifecycle()
@@ -100,9 +94,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var page by rememberSaveable { mutableStateOf("map") }
     var activity by rememberSaveable { mutableStateOf(ActivityType.HIKE.name) }
     var finishDialog by rememberSaveable { mutableStateOf(false) }
-    var mapChoiceDialog by rememberSaveable { mutableStateOf(false) }
-    var amapConsentDialog by rememberSaveable { mutableStateOf(false) }
-    var missingAmapKeyDialog by rememberSaveable { mutableStateOf(false) }
     var fit by remember { mutableIntStateOf(0) }
     var zoomRequest by remember { mutableIntStateOf(0) }
     var centerLocationRequest by remember { mutableIntStateOf(0) }
@@ -140,15 +131,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
         }
     }
     fun showMap() { vm.clearSelection(); page = "map" }
-    fun chooseMap(choice: MapProvider) {
-        mapChoiceDialog = false
-        when {
-            choice != MapProvider.AMAP -> vm.setMapProvider(choice)
-            !vm.amapKeyConfigured || !vm.amapDeviceSupported -> missingAmapKeyDialog = true
-            !amapConsent -> amapConsentDialog = true
-            else -> vm.setMapProvider(choice)
-        }
-    }
     fun showList() { vm.clearSelection(); page = "list" }
     fun deleteFromList(id: String, document: Boolean) {
         if (active?.pathId == id) {
@@ -197,10 +179,9 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     .padding(horizontal = 12.dp, vertical = 4.dp), fontSize = 12.sp, maxLines = 1)
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
-                        reference = referencePoints, waypoints = referenceWaypoints, provider = mapProvider, current = orientedLocation)
+                        reference = referencePoints, waypoints = referenceWaypoints, current = orientedLocation)
                     Column(Modifier.align(Alignment.TopEnd).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MapControl("查看全程", "fit") { fit++ }
-                        MapControl("选择地图", "layers") { mapChoiceDialog = true }
                     }
                     Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MapControl("放大", "plus") { zoomIn = true; zoomRequest++ }
@@ -208,7 +189,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     }
                     if (currentLocation != null) MapControl("回到当前位置", "locate",
                         Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 16.dp)) { centerLocationRequest++ }
-                    if (onlineMap) Text("© OpenStreetMap contributors", Modifier.align(Alignment.BottomCenter).padding(6.dp), style = MaterialTheme.typography.labelSmall)
                 }
             }
             return@Scaffold
@@ -217,22 +197,19 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             Box(Modifier.padding(padding).fillMaxSize()) {
                 TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
                     reference = if (page == "map") referencePoints else emptyList(),
-                    waypoints = if (page == "map") referenceWaypoints else detailWaypoints, provider = mapProvider,
+                    waypoints = if (page == "map") referenceWaypoints else detailWaypoints,
                     current = orientedLocation)
                 Text(mapPositionText(currentLocation), Modifier.align(Alignment.TopCenter).fillMaxWidth()
                     .background(Color(0xDDF7F8F4)).padding(horizontal = 12.dp, vertical = 5.dp),
                     fontSize = 12.sp, color = Color(0xFF25392F), maxLines = 1)
                 MapControl("退出全屏", "close", Modifier.align(Alignment.TopStart).padding(start = 12.dp, top = 42.dp)) { fullMap = false }
                 MapControl("查看全程", "fit", Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 42.dp)) { fit++ }
-                MapControl("选择地图", "layers", Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 104.dp)) { mapChoiceDialog = true }
                 Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 40.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     MapControl("放大", "plus") { zoomIn = true; zoomRequest++ }
                     MapControl("缩小", "minus") { zoomIn = false; zoomRequest++ }
                 }
                 if (currentLocation != null) MapControl("回到当前位置", "locate",
                     Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 40.dp)) { centerLocationRequest++ }
-                if (onlineMap) Text("© OpenStreetMap contributors", modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
-                    style = MaterialTheme.typography.labelSmall)
             }
             return@Scaffold
         }
@@ -247,9 +224,8 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     Box(Modifier.fillMaxWidth().height(240.dp)) {
                     TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
                         reference = if (page == "map") referencePoints else emptyList(),
-                        waypoints = if (page == "map") referenceWaypoints else detailWaypoints, provider = mapProvider,
+                        waypoints = if (page == "map") referenceWaypoints else detailWaypoints,
                         current = orientedLocation)
-                    MapControl("选择地图", "layers", Modifier.align(Alignment.TopEnd).padding(8.dp)) { mapChoiceDialog = true }
                     if (currentLocation != null) MapControl("回到当前位置", "locate",
                         Modifier.align(Alignment.BottomStart).padding(8.dp)) { centerLocationRequest++ }
                     }
@@ -257,11 +233,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 if (page == "map" && currentLocation == null) Text(liveStatus ?: "正在定位当前位置…",
                     Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when (mapProvider) {
-                        MapProvider.OSM -> "$mapStatus · © OpenStreetMap contributors"
-                        MapProvider.AMAP -> "高德地图 · 轨迹仍为 GPS 原始坐标"
-                        MapProvider.EMPTY -> "空白地图 · 轨迹离线可用"
-                    }, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                    Text("无底图 · 轨迹离线可用", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = { fullMap = true }) { Text("全屏") }
                     TextButton(onClick = { fit++ }) { Text("查看全程") }
                 }
@@ -387,33 +359,15 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Text("记录精度：均衡（约 3 秒更新）")
                 Text("单位：公里 / 米")
                 Text("存储：本机私有数据库。卸载应用或清除数据会删除轨迹；请定期导出 GPX 备份。")
-                Row(verticalAlignment = Alignment.CenterVertically) { Text("地图：${mapProvider.label}", Modifier.weight(1f)); TextButton(onClick = { mapChoiceDialog = true }) { Text("切换") } }
-                Text("OpenStreetMap 和高德需要联网。空白地图与本地轨迹可离线查看。")
+                Text("轨迹视图：无底图、无地图引擎；本地轨迹可离线查看。")
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.4.3 · 地图切换", style = MaterialTheme.typography.labelLarge)
+                Text("山径 0.4.4 · 极简版", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
     ImportDialog(importState, importVm::select, importVm::waypoints, importVm::save, importVm::cancel, importVm::openDuplicate)
-    if (mapChoiceDialog) AlertDialog(onDismissRequest = { mapChoiceDialog = false }, title = { Text("选择地图") },
-        text = { Column { MapProvider.entries.forEach { choice ->
-            TextButton(onClick = { chooseMap(choice) }, modifier = Modifier.fillMaxWidth()) {
-                Text("${if (choice == mapProvider) "✓  " else ""}${choice.label}")
-            }
-        } } }, confirmButton = { TextButton(onClick = { mapChoiceDialog = false }) { Text("取消") } })
-    if (missingAmapKeyDialog) AlertDialog(onDismissRequest = { missingAmapKeyDialog = false }, title = { Text("高德地图不可用") },
-        text = { Text(if (!vm.amapDeviceSupported) "此模拟器使用 x86 架构，当前高德 SDK 没有对应原生库。可继续使用空白或 OpenStreetMap 地图。"
-            else "此安装包尚未配置与你的包名及签名匹配的 Android 地图 Key。配置后重新构建即可使用。") },
-        confirmButton = { TextButton(onClick = { missingAmapKeyDialog = false }) { Text("知道了") } })
-    if (amapConsentDialog) AlertDialog(onDismissRequest = { amapConsentDialog = false }, title = { Text("启用高德地图") },
-        text = { Column {
-            Text("高德地图 SDK 将联网加载底图，并按高德隐私政策处理设备和地图使用信息。仅在你选择高德地图后启用。")
-            TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://lbs.amap.com/pages/privacy/"))) }) { Text("查看高德隐私政策") }
-        } }, confirmButton = { TextButton(onClick = {
-            vm.approveAmap(); vm.setMapProvider(MapProvider.AMAP); amapConsentDialog = false
-        }) { Text("同意并启用") } }, dismissButton = { TextButton(onClick = { amapConsentDialog = false }) { Text("取消") } })
     if (exportDialog != null && detailDocument != null) AlertDialog(onDismissRequest = { exportDialog = null },
         title = { Text(if (exportDialog == "share") "分享 GPX" else "导出 GPX") },
         text = { Column {

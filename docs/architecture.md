@@ -1,4 +1,4 @@
-# 代码组织（阶段 2）
+# 代码组织（极简分支）
 
 代码根目录：`app/src/main/java/com/trail/app`。
 
@@ -10,7 +10,7 @@
 | recording/LocationSource | 平台 GPS 与可替换的定位接口 | 将 Location 转换为领域样本 |
 | recording/RecordingService | 前台通知、定位订阅、串行命令队列、五秒心跳 | 正常运行时唯一记录写入者 |
 | tracks/TrailViewModel | 数据库 Flow 转换为页面状态 | 不负责定位生命周期 |
-| map/TrailMap | MapLibre 生命周期、GeoJSON 分段渲染、全程视图 | 不改变原始点；MapSource 隔离底图配置 |
+| map/TrailMap、TrackProjection | Compose Canvas 自绘轨迹、当前位置、拖动缩放与全程视图 | 无地图 SDK 或网络；不改变原始点 |
 | ui/TrailScreen、TrailTheme、Formatting | 页面、状态文案、单位格式 | 所有记录操作交给 Activity/Service |
 | MainActivity | 按需权限、系统设置跳转、发出记录命令 | 不直接修改数据库 |
 | TrailApplication | 数据库容器、进程级恢复屏障、错误状态 | Activity 重建不重复恢复 |
@@ -19,7 +19,7 @@
 | exchange/GpxWriter、GpxExportRepository | 标准顺序序列化、原始点分段读取、私有临时文件与 SAF 保存 | 先完整生成并重解析，再向外部目标复制 |
 | data/TrackManagementRepository、tracks/TrackActionsViewModel | 改名、删除与导出操作状态 | 外键事务清理，活跃录制不可删除或导出 |
 | exchange/ImportViewModel、ui/ImportDialog | 文件读取、取消、选择与重复处理 | 旋转屏幕保留导入任务，进程中断不假装继续 |
-| map/MapGeometry、MapSource | 跨日期线渲染、视口计算、底图隐私开关与缓存 | 只变换显示，不改 WGS84 原点 |
+| map/MapGeometry | 跨日期线断线、视口范围计算 | 只变换显示，不改 WGS84 原点 |
 
 ## 关键设计
 
@@ -29,10 +29,10 @@
 4. 有效时长用 `elapsedRealtime`，墙钟只用于日期显示。每个点写入一次事务，五秒心跳持久化计时；恢复只承认最后提交的数据，不累计停机时间。
 5. 应用进程启动先将遗留会话标记中断，UI 和 Service 等待这一步完成。正常 Service 不主动在后台重启，用户进入应用后选择继续/结束；继续开启新段。强制停止和关机不能持续采集。
 6. 保存/暂停命令不要求位置权限：可见 Activity 使用普通 Service 启动完成封存；开始/继续才启动 location 类型前台服务并申请精确定位。
-7. 低精度点保留且标记，不用于距离或连线。MapLibre 在低精度点和段界切断几何；不得先过滤坏点再直接连接两侧好点。
+7. 低精度点保留且标记，不用于距离或连线。自绘画布在低精度点和段界切断几何；不得先过滤坏点再直接连接两侧好点。
 8. 数据库写失败时关闭采集、报错并保留已经提交的数据；不清库、不覆盖、不继续假报正常。数据库打不开则阻止新记录。
 9. GPX 两次顺序读取：第一次有界预览，确认后第二次写入。每批最多 500 个事件或约 1 Mi 字符扩展，避免长事务阻塞录制。文档先为 STAGING，所有选择对象完成后才原子切换 READY；取消、失败和进程恢复删除未发布数据及其私有副本。
-10. 参考路线的路径 ID 和当前录制路径完全分离；SavedStateHandle 保存页面选择，加载/移除参考线不写 Session。MapLibre 使用紫色参考线与白色描边的绿色实录线区分。
+10. 参考路线的路径 ID 和当前录制路径完全分离；SavedStateHandle 保存页面选择，加载/移除参考线不写 Session。自绘画布使用紫色参考线与白色描边的绿色实录线区分。
 11. XML 禁用 DTD/外部实体；命名空间、结构、坐标及可选数值严格检查。未知子树携带命名空间保存；原文件另存私有副本，为阶段 3 的语义导出与原件分享分别提供数据。
 12. GPX 1.1 导出逐段分页读原始点，避免使用地图抽稀数据；同类路线按原 ordinal 排列，但 1.1 标准要求路线整体先于轨迹。1.0 URL 转为 link，无法直接映射的旧字段写入带来源版本的应用扩展。
 13. 删除路径时同一事务清理其 Path/Segment XML 片段及级联点；若同文件仍有其他路径或顶层航点，文档与原件继续保留。确认后删除最后一个对象才清理私有原件。分享通过 FileProvider 只授权对应私有文件。

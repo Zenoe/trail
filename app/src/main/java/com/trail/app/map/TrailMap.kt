@@ -1,180 +1,127 @@
 package com.trail.app.map
 
-import android.os.Bundle
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import com.trail.app.domain.LocationSample
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.trail.app.data.PointEntity
 import com.trail.app.data.WaypointEntity
-import org.maplibre.android.MapLibre
-import org.maplibre.android.camera.CameraUpdateFactory
-import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.geometry.LatLngBounds
-import org.maplibre.android.maps.*
-import org.maplibre.android.style.layers.*
-import org.maplibre.android.style.layers.PropertyFactory.*
-import org.maplibre.android.style.sources.GeoJsonSource
-import org.maplibre.geojson.*
+import com.trail.app.domain.LocationSample
 
+/** 无底图轨迹画布：不依赖地图 SDK、不访问网络，也不修改 WGS84 原始点。 */
 @Composable
 fun TrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int = 0, zoomIn: Boolean = true,
     centerLocationRequest: Int = 0, modifier: Modifier = Modifier,
-    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(), provider: MapProvider = MapProvider.EMPTY,
+    reference: List<PointEntity> = emptyList(), waypoints: List<WaypointEntity> = emptyList(),
     current: LocationSample? = null) {
-    if (provider == MapProvider.AMAP) AmapTrailMap(points, fitRequest, zoomRequest, zoomIn,
-        centerLocationRequest, modifier, reference, waypoints, current)
-    else MapLibreTrailMap(points, fitRequest, zoomRequest, zoomIn, centerLocationRequest, modifier,
-        reference, waypoints, provider == MapProvider.OSM, current)
-}
-
-@Composable
-private fun MapLibreTrailMap(points: List<PointEntity>, fitRequest: Int, zoomRequest: Int, zoomIn: Boolean,
-    centerLocationRequest: Int, modifier: Modifier,
-    reference: List<PointEntity>, waypoints: List<WaypointEntity>, online: Boolean,
-    current: LocationSample?) {
-    val context = LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val view = remember { MapLibre.getInstance(context); MapView(context).apply { onCreate(Bundle()) } }
-    var map by remember { mutableStateOf<MapLibreMap?>(null) }
-    var loaded by remember { mutableIntStateOf(0) }
-    var appliedZoomRequest by remember { mutableIntStateOf(zoomRequest) }
-    var markerScreen by remember { mutableStateOf<Offset?>(null) }
-    var cameraBearing by remember { mutableFloatStateOf(0f) }
-    var mapWidth by remember { mutableIntStateOf(0) }
-    DisposableEffect(view, lifecycle) {
-        val observer = LifecycleEventObserver { _, event -> when (event) {
-            Lifecycle.Event.ON_START -> view.onStart(); Lifecycle.Event.ON_RESUME -> view.onResume()
-            Lifecycle.Event.ON_PAUSE -> view.onPause(); Lifecycle.Event.ON_STOP -> view.onStop(); else -> Unit
-        } }
-        lifecycle.addObserver(observer)
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) view.onStart()
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) view.onResume()
-        view.getMapAsync { map = it }
-        onDispose { lifecycle.removeObserver(observer); view.onPause(); view.onStop(); view.onDestroy() }
-    }
-    LaunchedEffect(map, online) {
-        loaded = 0
-        map?.let { ready ->
-            // MapLibre 默认署名点会弹出 SDK 信息；本应用在地图外直接展示底图来源，避免误触。
-            ready.uiSettings.isAttributionEnabled = false
-            ready.uiSettings.isLogoEnabled = false
-            ready.uiSettings.isCompassEnabled = false
-            ready.setStyle(Style.Builder().fromJson(if (online) MapSource.OSM_STYLE else MapSource.LOCAL_STYLE)) { style ->
-                listOf("track", "reference", "markers", "starts", "ends").forEach { style.addSource(GeoJsonSource(it, FeatureCollection.fromFeatures(emptyArray<Feature>()))) }
-                // 当前 MapLibre/SwiftShader 组合在空 GeoJSON 源后追加虚线时仅绘制端点；实线保证参考几何可见。
-                style.addLayer(LineLayer("reference-line", "reference").withProperties(lineColor("#7450A2"), lineWidth(4f)))
-                style.addLayer(LineLayer("track-halo", "track").withProperties(lineColor("#FFFFFF"), lineWidth(7f)))
-                style.addLayer(LineLayer("track-line", "track").withProperties(lineColor("#17634B"), lineWidth(4f)))
-                style.addLayer(CircleLayer("markers-dot", "markers").withProperties(circleColor("#C77822"), circleRadius(6f), circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f)))
-                style.addLayer(CircleLayer("start-dot", "starts").withProperties(circleColor("#17634B"), circleRadius(7f), circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f)))
-                style.addLayer(CircleLayer("end-dot", "ends").withProperties(circleColor("#A7472D"), circleRadius(5f), circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f)))
-                loaded++
-            }
-        }
-    }
-    fun features(input: List<PointEntity>) = FeatureCollection.fromFeatures(MapGeometry.lines(input).map { line ->
-        Feature.fromGeometry(LineString.fromLngLats(line.map { Point.fromLngLat(it.lon, it.lat) }))
-    })
-    LaunchedEffect(points, reference, waypoints, loaded) {
-        if (loaded == 0) return@LaunchedEffect
-        map?.style?.getSourceAs<GeoJsonSource>("track")?.setGeoJson(features(points))
-        map?.style?.getSourceAs<GeoJsonSource>("reference")?.setGeoJson(features(reference))
-        val markers = mutableListOf<Feature>()
-        val starts = mutableListOf<Feature>()
-        val ends = mutableListOf<Feature>()
-        listOf(points, reference).forEach { path ->
-            path.firstOrNull { it.accepted }?.let { starts.add(Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude.coerceIn(-85.051129, 85.051129)))) }
-            path.lastOrNull { it.accepted }?.let { ends.add(Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude.coerceIn(-85.051129, 85.051129)))) }
-        }
-        waypoints.forEach { markers.add(Feature.fromGeometry(Point.fromLngLat(it.longitude, it.latitude.coerceIn(-85.051129, 85.051129)))) }
-        map?.style?.getSourceAs<GeoJsonSource>("markers")?.setGeoJson(FeatureCollection.fromFeatures(markers))
-        map?.style?.getSourceAs<GeoJsonSource>("starts")?.setGeoJson(FeatureCollection.fromFeatures(starts))
-        map?.style?.getSourceAs<GeoJsonSource>("ends")?.setGeoJson(FeatureCollection.fromFeatures(ends))
-    }
-    // 用数据身份触发初次全程视图；每个新 GPS 点不会打断用户平移缩放。
-    LaunchedEffect(points.firstOrNull()?.segmentId, reference.firstOrNull()?.segmentId, waypoints.firstOrNull()?.id, fitRequest, loaded) {
-        if (loaded == 0) return@LaunchedEffect
-        val coordinates = (points + reference).filter { it.accepted }.map { MapCoordinate(it.latitude, it.longitude) } +
+    val trackCoordinates = remember(points, reference, waypoints) {
+        (points + reference).filter { it.accepted }.map { MapCoordinate(it.latitude, it.longitude) } +
             waypoints.map { MapCoordinate(it.latitude, it.longitude) }
-        val extent = MapGeometry.extent(coordinates) ?: return@LaunchedEffect
-        if (extent.north == extent.south && extent.east == extent.west) map?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(extent.north, extent.west), 16.0))
-        else map?.moveCamera(CameraUpdateFactory.newLatLngBounds(LatLngBounds.from(extent.north, extent.east, extent.south, extent.west), 50))
     }
-    LaunchedEffect(zoomRequest, loaded) {
-        if (loaded > 0 && zoomRequest != appliedZoomRequest) {
-            appliedZoomRequest = zoomRequest
-            map?.animateCamera(if (zoomIn) CameraUpdateFactory.zoomIn() else CameraUpdateFactory.zoomOut())
+    var idleAnchor by remember { mutableStateOf<MapCoordinate?>(null) }
+    LaunchedEffect(trackCoordinates.isEmpty(), current?.latitude, current?.longitude) {
+        // 尚无轨迹时只取首个位置作视图锚点；每次 GPS 更新不能把用户手动平移的视角拉回去。
+        if (trackCoordinates.isNotEmpty()) idleAnchor = null
+        else if (idleAnchor == null && current != null) idleAnchor = MapCoordinate(current.latitude, current.longitude)
+    }
+    val extent = remember(trackCoordinates, idleAnchor) {
+        MapGeometry.extent(trackCoordinates.ifEmpty {
+            idleAnchor?.let(::listOf).orEmpty()
+        }) ?: MapExtent(0.0, 0.0, 0.0, 0.0)
+    }
+    var width by remember { mutableIntStateOf(0) }
+    var height by remember { mutableIntStateOf(0) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
+    var centerOverride by remember { mutableStateOf<MapCoordinate?>(null) }
+    var appliedZoom by remember { mutableIntStateOf(zoomRequest) }
+    var appliedCenter by remember { mutableIntStateOf(centerLocationRequest) }
+    // 仅换轨迹或点击“全程”时重置视角；后续 GPS 点不能反复抢走手势视角。
+    LaunchedEffect(points.firstOrNull()?.segmentId, reference.firstOrNull()?.segmentId,
+        waypoints.firstOrNull()?.id, fitRequest) {
+        if (trackCoordinates.isEmpty() && current != null) idleAnchor = MapCoordinate(current.latitude, current.longitude)
+        zoom = 1f; pan = Offset.Zero; centerOverride = null
+    }
+    LaunchedEffect(zoomRequest) {
+        if (zoomRequest != appliedZoom) {
+            appliedZoom = zoomRequest
+            zoom = (zoom * if (zoomIn) 1.5f else 1f / 1.5f).coerceIn(0.5f, 64f)
         }
     }
-    var appliedCenterRequest by remember { mutableIntStateOf(centerLocationRequest) }
-    LaunchedEffect(centerLocationRequest, current?.elapsedMs, loaded) {
-        if (loaded > 0 && centerLocationRequest != appliedCenterRequest && current != null) {
-            appliedCenterRequest = centerLocationRequest
-            map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(current.latitude, current.longitude), 16.0))
+    LaunchedEffect(centerLocationRequest) {
+        if (centerLocationRequest != appliedCenter && current != null) {
+            appliedCenter = centerLocationRequest
+            centerOverride = MapCoordinate(current.latitude, current.longitude)
+            pan = Offset.Zero
         }
     }
-    var centeredOnLocation by remember { mutableStateOf(false) }
-    var appliedLocationFit by remember { mutableIntStateOf(fitRequest) }
-    LaunchedEffect(current?.elapsedMs, loaded, fitRequest) {
-        if (loaded == 0 || current == null || points.any { it.accepted } || reference.any { it.accepted } || waypoints.isNotEmpty()) return@LaunchedEffect
-        if (!centeredOnLocation || fitRequest != appliedLocationFit) {
-            map?.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(current.latitude, current.longitude), 16.0))
-            centeredOnLocation = true
-            appliedLocationFit = fitRequest
-        }
-    }
-    DisposableEffect(map, current?.elapsedMs, mapWidth) {
-        val ready = map
-        fun project() {
-            cameraBearing = ready?.cameraPosition?.bearing?.toFloat() ?: 0f
-            markerScreen = if (ready == null || current == null || mapWidth == 0) null else
-                ready.projection.toScreenLocation(LatLng(current.latitude.coerceIn(-85.051129, 85.051129), current.longitude))
-                    .let { Offset(it.x, it.y) }
-        }
-        val listener = MapLibreMap.OnCameraMoveListener { project() }
-        ready?.addOnCameraMoveListener(listener)
-        project()
-        onDispose { ready?.removeOnCameraMoveListener(listener) }
-    }
-    Box(modifier.onSizeChanged { mapWidth = it.width }) {
-        AndroidView(factory = { view }, modifier = Modifier.fillMaxSize())
-        Canvas(Modifier.fillMaxSize()) {
-            val at = markerScreen ?: return@Canvas
-            // 屏幕像素叠层保持定位箭头恒定可读；投影只用于显示，不改动 WGS84 轨迹点。
-            // 以定位坐标为中心整体缩放，圆点、白边和箭头同比例缩小，避免偏离真实位置。
-            scale(0.5f, 0.5f, at) {
-                val radius = 11.dp.toPx()
-                drawCircle(Color.White, radius + 3.dp.toPx(), at)
-                drawCircle(Color(0xFF157CB4), radius, at)
-                val bearing = current?.bearingDeg
-                if (bearing != null) rotate(bearing - cameraBearing, at) {
-                    // 箭头尖端离开圆点，保持朝向明确；白边在深色卫星底图上仍可辨认。
-                    val arrow = Path().apply {
-                        moveTo(at.x, at.y - 31.dp.toPx())
-                        lineTo(at.x - 9.dp.toPx(), at.y - 10.dp.toPx())
-                        lineTo(at.x + 9.dp.toPx(), at.y - 10.dp.toPx())
-                        close()
-                    }
-                    drawPath(arrow, Color.White, style = Stroke(width = 2.dp.toPx()))
-                    drawPath(arrow, Color(0xFF157CB4))
-                } else drawCircle(Color.White, 3.dp.toPx(), at)
+    val lines = remember(points, reference) { MapGeometry.lines(points) to MapGeometry.lines(reference) }
+    Canvas(modifier.fillMaxSize().onSizeChanged { width = it.width; height = it.height }
+        .semantics { contentDescription = "无底图轨迹视图" }
+        .pointerInput(Unit) {
+            detectTransformGestures { _, gesturePan, gestureZoom, _ ->
+                zoom = (zoom * gestureZoom).coerceIn(0.5f, 64f)
+                pan += gesturePan
             }
+        }) {
+        drawRect(Color(0xFFE4EADB))
+        if (width == 0 || height == 0) return@Canvas
+        val projection = TrackProjection(extent, size.width, size.height, zoom, pan, centerOverride)
+        fun drawLineSegments(segments: List<List<MapCoordinate>>, color: Color, stroke: Float) {
+            segments.forEach { segment ->
+                val path = Path()
+                segment.forEachIndexed { index, coordinate ->
+                    val at = projection.project(coordinate)
+                    if (index == 0) path.moveTo(at.x, at.y) else path.lineTo(at.x, at.y)
+                }
+                drawPath(path, color, style = Stroke(width = stroke))
+            }
+        }
+        drawLineSegments(lines.second, Color(0xFF7450A2), 4.dp.toPx())
+        drawLineSegments(lines.first, Color.White, 7.dp.toPx())
+        drawLineSegments(lines.first, Color(0xFF17634B), 4.dp.toPx())
+        listOf(points, reference).forEach { path ->
+            path.firstOrNull { it.accepted }?.let {
+                val at = projection.project(MapCoordinate(it.latitude, it.longitude))
+                drawCircle(Color.White, 9.dp.toPx(), at)
+                drawCircle(Color(0xFF17634B), 7.dp.toPx(), at)
+            }
+            path.lastOrNull { it.accepted }?.let {
+                val at = projection.project(MapCoordinate(it.latitude, it.longitude))
+                drawCircle(Color.White, 7.dp.toPx(), at)
+                drawCircle(Color(0xFFA7472D), 5.dp.toPx(), at)
+            }
+        }
+        waypoints.forEach {
+            val at = projection.project(MapCoordinate(it.latitude, it.longitude))
+            drawCircle(Color.White, 8.dp.toPx(), at)
+            drawCircle(Color(0xFFC77822), 6.dp.toPx(), at)
+        }
+        current?.let {
+            val at = projection.project(MapCoordinate(it.latitude, it.longitude))
+            drawCircle(Color.White, 9.dp.toPx(), at)
+            drawCircle(Color(0xFF157CB4), 7.dp.toPx(), at)
+            it.bearingDeg?.let { bearing -> rotate(bearing, at) {
+                val arrow = Path().apply {
+                    moveTo(at.x, at.y - 19.dp.toPx())
+                    lineTo(at.x - 6.dp.toPx(), at.y - 7.dp.toPx())
+                    lineTo(at.x + 6.dp.toPx(), at.y - 7.dp.toPx())
+                    close()
+                }
+                drawPath(arrow, Color.White, style = Stroke(width = 2.dp.toPx()))
+                drawPath(arrow, Color(0xFF157CB4))
+            } }
         }
     }
 }

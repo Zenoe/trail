@@ -6,7 +6,6 @@ import com.trail.app.data.*
 import com.trail.app.exchange.GpxImportRepository
 import com.trail.app.exchange.GpxExportRepository
 import java.io.File
-import com.trail.app.map.MapSource
 import com.trail.app.recording.LiveLocationTracker
 import com.trail.app.recording.AndroidLocationSource
 import com.trail.app.recording.GpsSubscriptionHub
@@ -25,8 +24,6 @@ class TrailApplication : Application() {
         private set
     lateinit var management: TrackManagementRepository
         private set
-    lateinit var maps: MapSource
-        private set
     lateinit var liveLocation: LiveLocationTracker
         private set
     lateinit var gps: GpsSubscriptionHub
@@ -35,8 +32,6 @@ class TrailApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        org.maplibre.android.MapLibre.getInstance(this)
-        maps = MapSource(this)
         gps = GpsSubscriptionHub(AndroidLocationSource(this))
         liveLocation = LiveLocationTracker(this, gps.handle())
         val db = Room.databaseBuilder(this, TrailDatabase::class.java, "trail.db").addMigrations(Migrations.FROM_1_TO_2, Migrations.FROM_2_TO_3).build()

@@ -1,5 +1,7 @@
 # 技术决策与阶段验收
 
+极简分支更新：`minimal-no-map-engine` 不采用下文历史方案中的 MapLibre、OpenStreetMap 或高德 SDK；轨迹由 Compose Canvas 自绘，不提供街道、地形或卫星底图，也没有联网地图请求。现行实现见[极简版说明](minimal.md)。
+
 ## 已选方案
 
 Android 原生 Kotlin + Compose + ViewModel/StateFlow + Room；最低 API 26 暂定，compile/target 在阶段 1 按当时稳定工具链与发布要求固定。单 app 模块起步，按 recording、tracks、exchange、map、settings 包分工，避免提前拆分大量模块。

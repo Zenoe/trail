@@ -1,17 +1,9 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.kapt")
 }
-
-val localAmapKey = Properties().apply {
-    val localFile = rootProject.file("local.properties")
-    if (localFile.isFile) localFile.inputStream().use(::load)
-}.getProperty("amap.key", "")
-val amapKey = providers.gradleProperty("AMAP_KEY").orNull ?: localAmapKey
 
 android {
     namespace = "com.trail.app"
@@ -20,10 +12,8 @@ android {
         applicationId = "com.trail.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.4.3-beta"
-        manifestPlaceholders["amapKey"] = amapKey
-        buildConfigField("String", "AMAP_KEY", "\"${amapKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        versionCode = 10
+        versionName = "0.4.4-minimal"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
@@ -31,7 +21,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true; buildConfig = true }
+    buildFeatures { compose = true }
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
 }
 kapt { arguments { arg("room.schemaLocation", "$projectDir/schemas") } }
@@ -45,9 +35,6 @@ dependencies {
     implementation("androidx.room:room-runtime:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
     kapt("androidx.room:room-compiler:2.8.4")
-    implementation("org.maplibre.gl:android-sdk:11.11.0")
-    implementation("com.amap.api:3dmap:10.0.600")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")

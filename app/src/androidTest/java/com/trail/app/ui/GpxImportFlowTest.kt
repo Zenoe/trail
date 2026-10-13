@@ -1,22 +1,22 @@
 package com.trail.app.ui
 
+import android.Manifest
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import com.trail.app.MainActivity
 import org.junit.Rule
 import org.junit.Test
 import java.io.File
-import android.view.View
-import android.view.ViewGroup
-import android.graphics.RectF
-import org.maplibre.android.maps.MapView
 
 class GpxImportFlowTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val permissions: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private fun waitFor(text: String) { compose.waitUntil(15_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() } }
     @Test fun viewIntentPreviewSaveLoadAndDuplicate() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -36,20 +36,8 @@ class GpxImportFlowTest {
         screenshot("detail")
         compose.onNodeWithText("加载到地图").performScrollTo().performClick()
         waitFor("移除参考路线")
-        // Compose 空闲不代表原生地图已接收新数据；先验证原生地图已有参考线要素，像素结果另做截图复核。
-        fun findMap(view: View): MapView? = if (view is MapView) view else if (view is ViewGroup)
-            (0 until view.childCount).firstNotNullOfOrNull { findMap(view.getChildAt(it)) } else null
-        compose.waitUntil(15_000) {
-            var rendered = false
-            instrumentation.runOnMainSync {
-                findMap(compose.activity.window.decorView)?.let { view -> view.getMapAsync { map ->
-                    rendered = map.queryRenderedFeatures(RectF(0f, 0f, view.width.toFloat(), view.height.toFloat()), "reference-line").isNotEmpty()
-                } }
-            }
-            rendered
-        }
-        // 渲染查询与屏幕合成存在一帧以上延迟，截图等待原生样式过渡结束。
-        Thread.sleep(1_000)
+        // 自绘画布没有原生地图层；参考路线仍由 UI 状态和截图复核。
+        compose.onNodeWithContentDescription("无底图轨迹视图").assertExists()
         screenshot("reference")
         open()
         waitFor("打开已有")

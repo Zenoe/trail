@@ -1,5 +1,7 @@
 # 山径 · 轻量 Android 轨迹工具
 
+当前分支 `minimal-no-map-engine`（0.4.4-minimal）：移除 MapLibre、高德及其联网底图、Key 注入与地图选择。改用 Compose Canvas 在纯色背景绘制轨迹、参考路线、标记和当前位置箭头，保留拖动、缩放、全程与 GPX 导入导出；无需网络权限。debug APK 约 11 MB。具体边界见[极简版说明](docs/minimal.md)。下文是先前版本的历史记录，不代表此分支仍含地图 SDK。
+
 0.4.3-beta：地图页、全屏页和记录页新增图标按钮，可选空白、OpenStreetMap、高德地图；选择保存在本机。高德只在用户查看隐私政策并同意后初始化 SDK，GPS/GPX 坐标仍保留 WGS84，只在高德显示层转换。高德需与 `com.trail.app` 包名和签名匹配的 Android 地图 Key；配置方式与当前验证边界见[地图选择说明](docs/map-providers.md)。
 
 2026-10-11。暂定名「山径」，面向 Android 的轻量轨迹记录与加载工具。
