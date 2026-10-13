@@ -31,12 +31,11 @@ class MapPickerTest {
                 // 模拟器可能有 ARM 转译能力；首次选择必须先展示隐私告知。
                 compose.onNodeWithText("启用高德地图").assertExists()
                 compose.onNodeWithText("同意并启用").performClick()
-                compose.waitUntil(15_000) {
-                    compose.onAllNodesWithText("高德地图 · 轨迹仍为 GPS 原始坐标").fetchSemanticsNodes().isNotEmpty()
-                }
                 compose.onNodeWithContentDescription("选择地图").performClick()
+                compose.onNode(hasText("✓  高德地图") and hasClickAction()).assertExists()
                 compose.onNode(hasText("空白", substring = true) and hasClickAction()).performClick()
-                compose.onNodeWithText("空白地图 · 轨迹离线可用").assertExists()
+                compose.onNodeWithContentDescription("选择地图").performClick()
+                compose.onNode(hasText("✓  空白") and hasClickAction()).assertExists()
             } else compose.onNodeWithText("高德地图不可用").assertExists()
         } finally {
             prefs.edit().apply {

@@ -26,7 +26,7 @@ class RecordingFlowTest {
     @Test fun startPauseResumeFinishAndBrowse() {
         waitFor("开始记录")
         screenshot("home")
-        compose.onNodeWithText("开始记录").performScrollTo().performClick()
+        compose.onNodeWithText("开始记录").performClick()
         waitFor("暂停")
         compose.onNodeWithText("暂停").performClick()
         waitFor("继续")
@@ -37,10 +37,10 @@ class RecordingFlowTest {
         waitFor("保存")
         compose.onNodeWithText("放弃").assertExists()
         compose.onNodeWithText("保存").performClick()
-        waitFor("轨迹详情")
+        waitFor("加载到地图")
         screenshot("detail")
         compose.onNodeWithText("轨迹").performClick()
-        waitFor("我的轨迹")
+        waitFor("搜索轨迹或标记")
         compose.waitUntil(15_000) { compose.onAllNodesWithText("已保存", substring = true).fetchSemanticsNodes().isNotEmpty() }
         compose.onAllNodesWithText("已保存", substring = true).onFirst().assertExists()
     }
@@ -56,7 +56,7 @@ class RecordingFlowTest {
 
     @Test fun endDiscardReturnsToIdle() {
         waitFor("开始记录")
-        compose.onNodeWithText("开始记录").performScrollTo().performClick()
+        compose.onNodeWithText("开始记录").performClick()
         waitFor("结束")
         compose.onNodeWithText("结束").performClick()
         waitFor("放弃")

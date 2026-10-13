@@ -1,11 +1,13 @@
 package com.trail.app.ui
 
+import android.Manifest
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import com.trail.app.MainActivity
 import org.junit.Rule
 import org.junit.Test
@@ -16,7 +18,9 @@ import android.graphics.RectF
 import org.maplibre.android.maps.MapView
 
 class GpxImportFlowTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val permissions: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private fun waitFor(text: String) { compose.waitUntil(15_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() } }
     @Test fun viewIntentPreviewSaveLoadAndDuplicate() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -31,7 +35,7 @@ class GpxImportFlowTest {
         open()
         waitFor("保存所选")
         compose.onNodeWithText("保存所选").performClick()
-        waitFor("轨迹详情")
+        waitFor("加载到地图")
         Thread.sleep(1_000)
         screenshot("detail")
         compose.onNodeWithText("加载到地图").performScrollTo().performClick()
@@ -55,7 +59,7 @@ class GpxImportFlowTest {
         waitFor("打开已有")
         screenshot("duplicate")
         compose.onNodeWithText("打开已有").performClick()
-        waitFor("轨迹详情")
+        waitFor("加载到地图")
         compose.onNodeWithText("GPX 实测轨迹").assertExists()
         } finally {
             // ActivityScenario 用最初 Intent 匹配生命周期；接收文件会替换 Intent，结束前还原测试标识。

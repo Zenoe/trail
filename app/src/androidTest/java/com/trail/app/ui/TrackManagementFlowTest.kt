@@ -1,10 +1,12 @@
 package com.trail.app.ui
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import com.trail.app.MainActivity
 import org.junit.Rule
 import org.junit.Test
@@ -14,50 +16,48 @@ import java.util.UUID
 import android.graphics.Bitmap
 
 class TrackManagementFlowTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val permissions: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private fun waitFor(text: String) = compose.waitUntil(15_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
 
-    @Test fun renameFilterExportOptionsAndDeleteSelectedPath() {
+    @Test fun filterExportOptionsAndDeleteSelectedPath() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originalIntent = compose.activity.intent
         val id = UUID.randomUUID().toString().take(8)
         val title = "阶段三测试-$id"
         val file = File(instrumentation.targetContext.cacheDir, "stage3-ui-$id.gpx")
         val fixture = instrumentation.context.assets.open("stage2-sample.gpx").bufferedReader().use { it.readText() }
-        file.writeText(fixture.replace("Trail test fixture", "Stage3 $id"))
+        file.writeText(fixture.replace("Trail test fixture", "Stage3 $id").replace("林间环线 · 测试", title))
         try {
             compose.activityRule.scenario.onActivity { it.onNewIntent(Intent(Intent.ACTION_VIEW, Uri.fromFile(file))) }
             waitFor("保存所选")
             compose.onNodeWithText("保存所选").performClick()
-            waitFor("轨迹详情")
-            compose.onNodeWithText("全屏").performClick()
+            waitFor("加载到地图")
+            compose.onNodeWithContentDescription("全屏").performClick()
             compose.onNodeWithText("纬度", substring = true).assertExists()
             screenshot("full-map")
             compose.onNodeWithContentDescription("放大").performClick()
             compose.onNodeWithContentDescription("缩小").performClick()
             compose.onNodeWithContentDescription("查看全程").performClick()
             compose.onNodeWithContentDescription("退出全屏").performClick()
-            waitFor("重命名")
-            compose.onNodeWithText("重命名").performScrollTo().performClick()
-            compose.onNode(hasSetTextAction()).performTextClearance()
-            compose.onNode(hasSetTextAction()).performTextInput(title)
-            compose.onNodeWithText("保存").performClick()
+            compose.onAllNodesWithText("重命名").assertCountEquals(0)
             waitFor(title)
             compose.onNodeWithText("导出 GPX").performScrollTo().performClick()
             waitFor("导出此文件的全部路线")
             screenshot("export-options")
             compose.onNodeWithText("取消").performClick()
             compose.onNodeWithText("轨迹").performClick()
-            waitFor("搜索轨迹或标记")
+            waitFor("全部")
             compose.onNode(hasSetTextAction()).performTextInput(title)
             waitFor(title)
             screenshot("filtered")
             assertTrue(compose.onAllNodesWithText("返程路线 · 测试").fetchSemanticsNodes().isEmpty())
             compose.onAllNodesWithText(title).onLast().performClick()
-            waitFor("轨迹详情")
+            waitFor("加载到地图")
             compose.onNodeWithText("删除").performScrollTo().performClick()
             compose.onAllNodesWithText("删除").onLast().performClick()
-            waitFor("我的轨迹")
+            waitFor("全部")
             // 搜索框仍保留查询词；删除后只应剩输入框，不应再有结果卡片。
             compose.waitUntil(15_000) { compose.onAllNodesWithText(title).fetchSemanticsNodes().size == 1 }
             compose.onNode(hasSetTextAction()).performTextClearance()

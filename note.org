@@ -20,3 +20,35 @@ app\build\outputs\apk\release\
 * amap sha1
 ~/source/android/trail (master)
 $ keytool -v -list -keystore trail-release.jks
+
+* build release
+已经用keytool -genkey -v -keystore trail-release.jks -keyalg RSA -keysize 2048 -validity 10000 - alias trail生成了trail-release.jks. 怎么编译release,
+
+当前工程还没有配置 Gradle 的 release 签名，因此 `assembleRelease` 只会生成未签名 APK。你可以先构建，再用已生成的 `trail-release.jks` 手动签名。在 PowerShell 中进入 `C:\Users\2004l\source\android\trail` 后运行：
+
+```powershell
+.\gradlew.bat :app:assembleRelease
+
+$tools = "C:\Users\2004l\AppData\Local\Android\Sdk\build-tools\36.0.0"
+$dir = "app\build\outputs\apk\release"
+& "$tools\zipalign.exe" -f -p 4 "$dir\app-release-unsigned.apk" "$dir\app-release-aligned.apk"
+& "$tools\apksigner.bat" sign --ks "trail-release.jks" --ks-key-alias trail --out "$dir\app-release.apk" "$dir\app-release-aligned.apk"
+& "$tools\apksigner.bat" verify --verbose --print-certs "$dir\app-release.apk"
+```
+
+签名时会提示输入密码；最终文件是 `app\build\outputs\apk\release\app-release.apk`。`zipalign` 必须在签名前运行。[Android 官方命令行签名说明](https://developer.android.com/build/building-cmdline)
+
+发布前请核对验证输出中的 SHA-1 与你登记到高德的**发布版** SHA-1 一致，否则 release 版可能无法加载高德地图。`trail-release.jks` 目前未被 Git 忽略，切勿提交它；也请妥善备份，且不要在命令行明文写密码。
+
+* amap
+高德引擎是作为 Gradle 依赖引入的，配置在 [app/build.gradle.kts](C:/Users/2004l/source/android/trail/app/build.gradle.kts)：
+implementation("com.amap.api:3dmap:10.0.600")
+app/src/main/AndroidManifest.xml 里还配置了高德 Key 的 meta-data；具体 Key 放在本机被 Git 忽略的 local.properties，构建时由 Gradle 读取。高德地图的界面适配代码在 map/AmapTrailMap.kt。
+
+** 仅仅加了高德地图功能，就大了50M,为啥
+主要是新增的高德 3D 地图 SDK 自带原生地图引擎。工程现在同时打包 MapLibre 和高德地图，两套引擎都会进入 APK；高德 SDK 的 ARM 原生库单个就约 13–20 MB，而且 debug 包还包含多个 CPU 架构的库。
+所以增加的体积并不只是地图代码：APK 里同时有两套地图引擎，最终通用 debug 包约 93 MB。如果只给 ARM64 手机发布，拆分架构包能去掉其他架构的重复库，但体积仍会明显增加。要大幅减小，需要进一步评估是否让两种地图共用一个渲染引擎，或只提供一种地图引擎。
+
+** 可以只用一种引擎吗
+可以。如果你接受只保留一种引擎，我建议保留 MapLibre，把高德地图作为 MapLibre 的底图样式或瓦片来源接入。这样能避免同时打包两套地图引擎，但前提是高德当前许可允许这种接法，并且地图的坐标转换、署名和 Key 校验都正确。
+另一种做法是全改用高德引擎：包会变小一些，但 OpenStreetMap 就不能再作为独立地图源继续使用，除非确认高德 SDK 支持合规叠加 OSM。

@@ -20,8 +20,8 @@ android {
         applicationId = "com.trail.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.4.3-beta"
+        versionCode = 11
+        versionName = "0.4.5-beta"
         manifestPlaceholders["amapKey"] = amapKey
         buildConfigField("String", "AMAP_KEY", "\"${amapKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

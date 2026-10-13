@@ -11,11 +11,13 @@ import androidx.core.content.FileProvider
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -91,7 +93,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     val mapProvider by vm.mapProvider.collectAsStateWithLifecycle()
     val amapConsent by vm.amapConsent.collectAsStateWithLifecycle()
     val onlineMap = mapProvider == MapProvider.OSM
-    val mapStatus by vm.mapStatus.collectAsStateWithLifecycle()
     val liveLocation by vm.currentLocation.collectAsStateWithLifecycle()
     val liveHeading by vm.currentHeading.collectAsStateWithLifecycle()
     val liveStatus by vm.currentLocationStatus.collectAsStateWithLifecycle()
@@ -111,8 +112,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
     var savingPath by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var listFilter by rememberSaveable { mutableStateOf("ALL") }
-    var renameDialog by remember { mutableStateOf(false) }
-    var renameText by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<Pair<String, Boolean>?>(null) } // id、是否为纯标记文件
     var exportDialog by remember { mutableStateOf<String?>(null) }
     var exportWhole by remember { mutableStateOf(false) }
@@ -160,23 +159,27 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
         else actions.deletePath(id) { vm.clearReferenceIfDeleted(id, null) }
     }
     BackHandler(fullMap || page != "map") { if (fullMap) fullMap = false else showMap() }
-    Scaffold(topBar = {
-        if (!fullMap && !(page == "map" && active != null)) TopAppBar(title = { Text(when (page) { "list" -> "我的轨迹"; "detail" -> "轨迹详情"; "settings" -> "设置"; else -> "山径" }) },
-            navigationIcon = { if (page == "detail" || page == "settings") TextButton(onClick = { showMap() }) { Text("返回") } },
-            actions = {
-                if (page == "list") TextButton(onClick = pickGpx) { Text("导入 GPX") }
-                if (page == "map") TextButton(onClick = { page = "settings" }) { Text("设置") }
-            })
-    }, bottomBar = {
-        if (!fullMap && page == "map" && active != null) Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+    Scaffold(bottomBar = {
+        if (!fullMap) Column {
+        // 空闲态的主操作贴着底栏；内容再多也由统计区滚动，不把地图压回固定的 240dp。
+        if (page == "map" && active == null) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { command(RecordingService.START, ActivityType.valueOf(activity)) },
+                modifier = Modifier.weight(1f).height(52.dp)) { Text("开始记录") }
+            OutlinedButton(onClick = pickGpx, modifier = Modifier.weight(1f).height(52.dp)) { Text("导入 GPX") }
+        }
+        if (page == "map" && active != null) Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
             // 录制中把常驻导航让给核心操作，地图因此可占据剩余全部高度。
             TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹") }
             TextButton(onClick = { command(if (RecordingRules.canPause(active!!.state)) RecordingService.PAUSE else RecordingService.RESUME, ActivityType.valueOf(activity)) },
                 modifier = Modifier.weight(1f)) { Text(if (RecordingRules.canPause(active!!.state)) "暂停" else "继续") }
             TextButton(onClick = { finishDialog = true }, modifier = Modifier.weight(1f)) { Text("结束") }
-        } else if (!fullMap) Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { page = "settings" }, modifier = Modifier.weight(1f)) { Text("设置") }
+        } else Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { showMap() }, modifier = Modifier.weight(1f)) { Text("地图", color = if (page == "map") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
             TextButton(onClick = { vm.clearSelection(); page = "list" }, modifier = Modifier.weight(1f)) { Text("轨迹", color = if (page == "list" || page == "detail") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+            TextButton(onClick = { page = "settings" }, modifier = Modifier.weight(1f)) { Text("设置", color = if (page == "settings") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
         }
     }) { padding ->
         if (!ready) { Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) { Text(error ?: "正在打开本地轨迹…") }; return@Scaffold }
@@ -198,6 +201,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Box(Modifier.fillMaxWidth().weight(1f)) {
                     TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
                         reference = referencePoints, waypoints = referenceWaypoints, provider = mapProvider, current = orientedLocation)
+                    MapControl("全屏", "expand", Modifier.align(Alignment.TopStart).padding(12.dp)) { fullMap = true }
                     Column(Modifier.align(Alignment.TopEnd).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MapControl("查看全程", "fit") { fit++ }
                         MapControl("选择地图", "layers") { mapChoiceDialog = true }
@@ -237,35 +241,37 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             return@Scaffold
         }
         when (page) {
-            "map", "detail" -> Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+            "map", "detail" -> BoxWithConstraints(Modifier.padding(padding).fillMaxSize()) {
+                // 统计区限定最大高度并独立滚动；地图拿走剩余空间，短屏仍至少留出可操作的地图。
+                val statsMaxHeight = (maxHeight - 220.dp).coerceAtLeast(140.dp)
+                    .coerceAtMost(if (page == "detail") 440.dp else 340.dp)
+                Column(Modifier.fillMaxSize()) {
                 if (error != null && page == "map") {
                     Notice(error!!)
                     Row { TextButton(onClick = openPermissions) { Text("权限设置") }; TextButton(onClick = openLocationSettings) { Text("定位设置") } }
                 }
                 if (!notificationsEnabled && active != null && page == "map") Notice("通知未开启，后台记录提示可能不可见；可在权限设置中开启。")
                 key(if (page == "detail") selectedPath ?: selectedDocument else "live") {
-                    Box(Modifier.fillMaxWidth().height(240.dp)) {
-                    TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
-                        reference = if (page == "map") referencePoints else emptyList(),
-                        waypoints = if (page == "map") referenceWaypoints else detailWaypoints, provider = mapProvider,
-                        current = orientedLocation)
-                    MapControl("选择地图", "layers", Modifier.align(Alignment.TopEnd).padding(8.dp)) { mapChoiceDialog = true }
-                    if (currentLocation != null) MapControl("回到当前位置", "locate",
-                        Modifier.align(Alignment.BottomStart).padding(8.dp)) { centerLocationRequest++ }
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                        TrailMap(points, fit, zoomRequest, zoomIn, centerLocationRequest, Modifier.fillMaxSize(),
+                            reference = if (page == "map") referencePoints else emptyList(),
+                            waypoints = if (page == "map") referenceWaypoints else detailWaypoints, provider = mapProvider,
+                            current = orientedLocation)
+                        MapControl("全屏", "expand", Modifier.align(Alignment.TopStart).padding(8.dp)) { fullMap = true }
+                        MapControl("选择地图", "layers", Modifier.align(Alignment.TopEnd).padding(8.dp)) { mapChoiceDialog = true }
+                        MapControl("查看全程", "fit", Modifier.align(Alignment.BottomEnd).padding(8.dp)) { fit++ }
+                        if (currentLocation != null) MapControl("回到当前位置", "locate",
+                            Modifier.align(Alignment.BottomStart).padding(8.dp)) { centerLocationRequest++ }
+                        else if (page == "map") Text(liveStatus ?: "正在定位当前位置…",
+                            Modifier.align(Alignment.BottomStart).padding(8.dp).background(Color(0xDDF7F8F4)),
+                            style = MaterialTheme.typography.labelSmall)
+                        // OSM 公共瓦片必须在地图上保留署名；其余状态文字不再占地图下方空间。
+                        if (onlineMap) Text("© OpenStreetMap contributors", Modifier.align(Alignment.BottomCenter).padding(6.dp),
+                            style = MaterialTheme.typography.labelSmall)
                     }
                 }
-                if (page == "map" && currentLocation == null) Text(liveStatus ?: "正在定位当前位置…",
-                    Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when (mapProvider) {
-                        MapProvider.OSM -> "$mapStatus · © OpenStreetMap contributors"
-                        MapProvider.AMAP -> "高德地图 · 轨迹仍为 GPS 原始坐标"
-                        MapProvider.EMPTY -> "空白地图 · 轨迹离线可用"
-                    }, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { fullMap = true }) { Text("全屏") }
-                    TextButton(onClick = { fit++ }) { Text("查看全程") }
-                }
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.fillMaxWidth().heightIn(max = statsMaxHeight).verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     val session = if (page == "detail") detailSession else active
                     val state = session?.state
                     val imported = page == "detail" && detailDocument?.source == "IMPORTED"
@@ -310,41 +316,39 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                     Text("升降为海拔估算，已过滤小幅波动；缺失海拔和分段处不跨段累计。", style = MaterialTheme.typography.labelSmall)
                     if (!imported) Text("GPS 高程（未校正）：" + (session?.elevationM?.let { "%.0f 米".format(it) } ?: "—"), style = MaterialTheme.typography.bodySmall)
                     else Text("累计爬升：—（尚未计算）", style = MaterialTheme.typography.bodySmall)
-                    if (page == "map") {
-                        if (active == null) Button(onClick = { command(RecordingService.START, ActivityType.valueOf(activity)) }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("开始记录") }
-                        else {
-                            Button(onClick = {
-                                command(if (RecordingRules.canPause(active!!.state)) RecordingService.PAUSE else RecordingService.RESUME, ActivityType.valueOf(activity))
-                            }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
-                                Text(if (RecordingRules.canPause(active!!.state)) "暂停记录" else "继续记录")
-                            }
-                            OutlinedButton(onClick = { finishDialog = true }, modifier = Modifier.fillMaxWidth()) { Text("结束") }
-                            if (state == RecordingState.PAUSED || state == RecordingState.INTERRUPTED) {
-                                TextButton(onClick = { deleteTarget = active!!.pathId to false }) { Text("丢弃暂停记录") }
-                            }
-                        }
-                        OutlinedButton(onClick = pickGpx, modifier = Modifier.fillMaxWidth()) { Text("导入 GPX") }
-                    } else {
+                    if (page == "detail") {
                         Button(onClick = { vm.loadReference(); showMap(); fit++ }, modifier = Modifier.fillMaxWidth()) { Text("加载到地图") }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "save" }, enabled = !actionState.busy) { Text("导出 GPX") }
                             OutlinedButton(onClick = { exportWhole = false; exportWaypoints = selectedPath == null; exportDialog = "share" }, enabled = !actionState.busy) { Text("分享") }
+                            OutlinedButton(onClick = { selectedPath?.let { deleteTarget = it to false } ?: selectedDocument?.let { deleteTarget = it to true } }) {
+                                Text("删除", color = MaterialTheme.colorScheme.error)
+                            }
                         }
                         if (imported && detailDocument?.originalFilePath != null) TextButton(onClick = { detailDocument?.id?.let(actions::prepareOriginal) }) { Text("分享导入原文件") }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { renameText = detail?.name ?: detailDocument?.name.orEmpty(); renameDialog = true }) { Text("重命名") }
-                            TextButton(onClick = { selectedPath?.let { deleteTarget = it to false } ?: selectedDocument?.let { deleteTarget = it to true } }) { Text("删除") }
-                        }
                         Text("绿点：起点 · 红点：终点 · 橙点：标记。", style = MaterialTheme.typography.bodySmall)
                         detailWaypoints.take(20).forEach { Text("◇ ${it.name ?: "未命名标记"} · ${it.latitude}, ${it.longitude}", style = MaterialTheme.typography.bodySmall) }
                         if (detailWaypoints.size > 20) Text("另有 ${detailWaypoints.size - 20} 个标记已显示在地图中")
                         if (session?.activeSlot == 1) Button(onClick = { showMap() }) { Text("返回当前记录") }
                     }
                 }
+                }
             }
             "list" -> LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
-                    OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("搜索轨迹或标记") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BasicTextField(value = query, onValueChange = { query = it }, singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                            modifier = Modifier.weight(1f).height(44.dp), decorationBox = { inner ->
+                                Box(Modifier.fillMaxSize().border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                                    if (query.isEmpty()) Text("搜索轨迹或标记", style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    inner()
+                                }
+                            })
+                        OutlinedButton(onClick = pickGpx, modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 10.dp)) { Text("导入 GPX") }
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("ALL" to "全部", "RECORDED" to "记录", "IMPORTED" to "导入", "ROUTE" to "路线").forEach { (key, label) ->
                             FilterChip(selected = listFilter == key, onClick = { listFilter = key }, label = { Text(label) })
@@ -384,6 +388,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 }
             }
             "settings" -> Column(Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("设置", style = MaterialTheme.typography.titleLarge)
                 Text("记录精度：均衡（约 3 秒更新）")
                 Text("单位：公里 / 米")
                 Text("存储：本机私有数据库。卸载应用或清除数据会删除轨迹；请定期导出 GPX 备份。")
@@ -392,7 +397,7 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
                 Text("暂停、失联与中断恢复均建立新分段。有效记录时长不包含暂停和等待定位时间。")
                 OutlinedButton(onClick = openPermissions) { Text("系统权限设置") }
                 OutlinedButton(onClick = openLocationSettings) { Text("系统定位设置") }
-                Text("山径 0.4.3 · 地图切换", style = MaterialTheme.typography.labelLarge)
+                Text("山径 0.4.5 · 地图优先布局", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -433,12 +438,6 @@ fun TrailScreen(vm: TrailViewModel, command: (String, ActivityType) -> Unit,
             actions.prepare(documentId, selection, exportWaypoints, purpose == "share")
         }) { Text("继续") } },
         dismissButton = { TextButton(onClick = { exportDialog = null }) { Text("取消") } })
-    if (renameDialog) AlertDialog(onDismissRequest = { renameDialog = false }, title = { Text("重命名") },
-        text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true, label = { Text("名称") }) },
-        confirmButton = { TextButton(onClick = {
-            selectedPath?.let { actions.renamePath(it, renameText) } ?: selectedDocument?.let { actions.renameDocument(it, renameText) }
-            renameDialog = false
-        }) { Text("保存") } }, dismissButton = { TextButton(onClick = { renameDialog = false }) { Text("取消") } })
     if (deleteTarget != null) AlertDialog(onDismissRequest = { deleteTarget = null }, title = { Text("删除这条轨迹？") },
         text = { Text(if (active?.pathId == deleteTarget?.first) "这条暂停的记录会被丢弃，无法恢复。" else "会删除本机保存的路线与轨迹点，无法撤销。若文件还有其他路线或标记，将继续保留。") },
         confirmButton = { TextButton(onClick = {
@@ -497,6 +496,12 @@ private fun mapPositionText(point: LocationSample?): String = if (point == null)
                 "close" -> {
                     drawLine(Color.White, Offset(2f, 2f), Offset(size.width - 2f, size.height - 2f), stroke)
                     drawLine(Color.White, Offset(size.width - 2f, 2f), Offset(2f, size.height - 2f), stroke)
+                }
+                "expand" -> {
+                    drawLine(Color.White, Offset(2f, mid - 4f), Offset(2f, 2f), stroke)
+                    drawLine(Color.White, Offset(2f, 2f), Offset(mid - 4f, 2f), stroke)
+                    drawLine(Color.White, Offset(size.width - 2f, mid + 4f), Offset(size.width - 2f, size.height - 2f), stroke)
+                    drawLine(Color.White, Offset(mid + 4f, size.height - 2f), Offset(size.width - 2f, size.height - 2f), stroke)
                 }
                 "locate" -> {
                     drawCircle(Color.White, 8.dp.toPx(), Offset(mid, mid), style = Stroke(width = 2.dp.toPx()))
